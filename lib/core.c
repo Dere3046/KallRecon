@@ -601,7 +601,6 @@ ks_dbg("  klmarks @ 0x%lx\n", klmarks_addr);
 ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 	ks_dbg("  layout  v%d\n", is_v1_layout ? 1 : 2);
 
-#ifdef KSYMLESS_DEBUG
 	if (kltable_addr && klindex_addr) {
 		unsigned short off0;
 		unsigned char c;
@@ -611,6 +610,14 @@ ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 			ks_dbg("  tbl verify: '0' match\n");
 		else
 			ks_dbg("  tbl verify: MISMATCH\n");
+	}
+	if (klmarks_addr && klnum_val) {
+		unsigned int m0, m1;
+		int mok = !safe_read(&m0, (void *)klmarks_addr, 4) && m0 == 0;
+		if (mok && (klnum_val + 255) / 256 > 1)
+			mok = !safe_read(&m1, (void *)(klmarks_addr + 4), 4)
+				&& m1 >= 256;
+		ks_dbg("  markers verify: %s\n", mok ? "OK" : "MISMATCH");
 	}
 	if (klnames_addr && klmarks_addr && klnum_val) {
 		unsigned int markers_cnt = (klnum_val + 255) / 256;
@@ -644,7 +651,6 @@ ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 				count == klnum_val ? "MATCH" : "MISMATCH");
 		}
 	}
-#endif
 
 	if (klbase_addr && kloffs_addr) {
 		unsigned long addr = kallsyms_name_to_addr("kallsyms_lookup_name");
