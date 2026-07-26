@@ -510,12 +510,7 @@ ks_dbg("[ksymless] layout: offsets not found\n");
 	}
 
 	if (is_v1_layout) {
-		unsigned long rb_addr = (kloffs_addr + klnum_val * 4 + 7) & ~7ULL;
-		klbase_addr = rb_addr;
-		u64 v64;
-		if (!safe_read(&v64, (void *)rb_addr, 8))
-			klbase_val = v64;
-		klnum_addr = (rb_addr + 8 + 7) & ~7ULL;
+		klnum_addr = (klbase_addr + 8 + 7) & ~7ULL;
 		{
 			u32 ns;
 			if (safe_read(&ns, (void *)klnum_addr, 4) || ns != klnum_val)
@@ -555,12 +550,7 @@ ks_dbg("[ksymless] layout: offsets not found\n");
 		else
 			klmarks_addr = (kltable_addr - marks_size) & ~7ULL;
 	} else {
-		klbase_addr = (kloffs_addr + klnum_val * 4 + 7) & ~7ULL;
 		klseqs_addr = detect_seqs(klbase_addr + 8, klnum_val);
-
-		u64 v64;
-		if (!safe_read(&v64, (void *)klbase_addr, 8))
-			klbase_val = v64;
 
 		if (klindex_addr && klnum_val) {
 			unsigned short ti255;
