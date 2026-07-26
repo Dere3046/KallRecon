@@ -251,6 +251,8 @@ static int verify_offsets_rb(unsigned long cand, int len,
 			rb_addr = sgn ? base_rb + delta : base_rb - delta;
 			if (safe_read(&rb, (void *)rb_addr, 8))
 				continue;
+			if (rb_addr >= cand && rb_addr < cand + len * 4)
+				continue;
 			if ((rb & ~0x1FFFFFULL) != kernel_base)
 				continue;
 			{
