@@ -470,8 +470,9 @@ static unsigned long find_token_index(unsigned long start)
 				unsigned short *ti =
 					(unsigned short *)((unsigned char *)buf +
 						off - 512);
-				if (check_ti_strong(ti) || check_token_index(ti))
-					return base + off - 512;
+				if (!check_ti_strong(ti))
+					continue;
+				return base + off - 512;
 			}
 		}
 	}
