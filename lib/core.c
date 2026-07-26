@@ -310,29 +310,24 @@ static int verify_offsets_rb(unsigned long cand, int len,
 	return 0;
 }
 
-static int scan_zerou32(unsigned long start, unsigned long end, int dir,
+static int scan_zerou32(unsigned long start, unsigned long end,
 			 unsigned long *best_cand, int *best_len)
 {
 	int found = 0;
 
-	for (unsigned long pg = start; dir > 0 ? pg < end : pg > end;
-	     pg += dir * 16 * 0x1000) {
-		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000)) {
-			if (dir > 0)
-				break;
-			continue;
-		}
+	for (unsigned long pg = start; pg < end; pg += 16 * 0x1000) {
+		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
+			break;
 
 		for (int pi = 0; pi < 16; pi++) {
-			int idx = dir > 0 ? pi : 15 - pi;
-			unsigned int *buf = &bigbuf[idx * 1024];
-			unsigned long base = pg + idx * 0x1000;
+			unsigned int *buf = &bigbuf[pi * 1024];
+			unsigned long base = pg + pi * 0x1000;
 
 			for (int off = 0; off < 0x1000; off += 4) {
 				if (buf[off / 4] != 0)
 					continue;
 
-				unsigned long cand = base + off;
+			unsigned long cand = base + off;
 				int len = 0, prev = -1;
 				int max_i = (4096 - off) / 4;
 				for (int i = 0; i < max_i; i++) {
@@ -345,7 +340,7 @@ static int scan_zerou32(unsigned long start, unsigned long end, int dir,
 				}
 				len = max_i;
 
-				for (int chunk = idx + 1; chunk < 16 && len < 500000;
+				for (int chunk = pi + 1; chunk < 16 && len < 500000;
 				     chunk++) {
 					unsigned int *pbuf = &bigbuf[chunk * 1024];
 					for (int i = 0; i < 1024 && len < 500000; i++) {
@@ -357,9 +352,9 @@ static int scan_zerou32(unsigned long start, unsigned long end, int dir,
 					}
 				}
 
-				for (unsigned long pg = base + (16 - idx) * 0x1000;
-				     len < 500000; pg += 16 * 0x1000) {
-					if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
+				for (unsigned long pg2 = base + (16 - pi) * 0x1000;
+				     len < 500000; pg2 += 16 * 0x1000) {
+					if (safe_read(bigbuf, (void *)pg2, 16 * 0x1000))
 						break;
 					for (int chunk = 0; chunk < 16 && len < 500000;
 					     chunk++) {
@@ -390,8 +385,8 @@ static int scan_zerou32(unsigned long start, unsigned long end, int dir,
 				klbase_addr = rb_addr;
 				klbase_val = rb;
 				found = 1;
-				ks_dbg("[ksymless] hit dir=%d pg=0x%lx sorted=%d\n",
-					dir, base, len);
+				ks_dbg("[ksymless] hit pg=0x%lx sorted=%d\n",
+					base, len);
 			}
 		}
 	}
@@ -402,12 +397,40 @@ static int discover_kallsyms(unsigned long ti_addr)
 {
 	unsigned long best_cand = 0;
 	int best_len = 0;
+	unsigned short ti255;
+	unsigned long scan_start, scan_end;
 
-	if (scan_zerou32(ti_addr & ~0xFFFULL,
-			 ti_addr + 0x400000, 1, &best_cand, &best_len))
-		goto found;
-	if (scan_zerou32(ti_addr & ~0xFFFULL,
-			 kernel_base, -1, &best_cand, &best_len))
+	if (safe_read(&ti255, (void *)(ti_addr + 255 * 2), 2))
+		return 0;
+
+	{
+		unsigned long pos = ti_addr - 1;
+		unsigned char c;
+		while (pos > kernel_base) {
+			if (safe_read(&c, (void *)pos, 1) || c != 0)
+				break;
+			pos--;
+		}
+		while (pos > kernel_base) {
+			if (safe_read(&c, (void *)pos, 1))
+				break;
+			if (c == 0)
+				break;
+			pos--;
+		}
+		if (pos + 1 > ti255)
+			kltable_addr = pos + 1 - ti255;
+		else
+			kltable_addr = ti_addr - 0x1000;
+	}
+	scan_start = kltable_addr > 0x200000 ?
+		kltable_addr - 0x200000 : kernel_base;
+	scan_end = ti_addr + 0x200000;
+
+	ks_dbg("[ksymless] scan 0x%lx-0x%lx kltable=0x%lx\n",
+		scan_start, scan_end, kltable_addr);
+
+	if (scan_zerou32(scan_start, scan_end, &best_cand, &best_len))
 		goto found;
 
 	ks_dbg("[ksymless] no offsets found\n");
