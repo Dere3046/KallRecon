@@ -319,7 +319,7 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 
 	for (unsigned long pg = start; pg < end; pg += 16 * 0x1000) {
 		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
-			break;
+			continue;
 
 		for (int pi = 0; pi < 16; pi++) {
 			unsigned int *buf = &bigbuf[pi * 1024];
