@@ -601,6 +601,7 @@ ks_dbg("  klmarks @ 0x%lx\n", klmarks_addr);
 ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 	ks_dbg("  layout  v%d\n", is_v1_layout ? 1 : 2);
 
+#ifdef KSYMLESS_CHECK
 	if (kltable_addr && klindex_addr) {
 		unsigned short off0;
 		unsigned char c;
@@ -651,6 +652,7 @@ ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 				count == klnum_val ? "MATCH" : "MISMATCH");
 		}
 	}
+#endif
 
 	if (klbase_addr && kloffs_addr) {
 		unsigned long addr = kallsyms_name_to_addr("kallsyms_lookup_name");

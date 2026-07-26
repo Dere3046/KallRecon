@@ -8,6 +8,10 @@ obj-m := probe.o
 ccflags-y += -DKSYMLESS_DEBUG
 endif
 
+ifeq ($(CHECK),1)
+ccflags-y += -DKSYMLESS_CHECK
+endif
+
 ccflags-y += -std=gnu11
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-variable
