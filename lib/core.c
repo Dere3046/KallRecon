@@ -426,8 +426,8 @@ static int discover_kallsyms(unsigned long ti_addr)
 			kltable_addr = ti_addr - 0x1000;
 	}
 	scan_start = kltable_addr > 0x200000 ?
-		kltable_addr - 0x200000 : kernel_base;
-	scan_end = ti_addr + 0x200000;
+		(kltable_addr - 0x200000) & ~0xFFFULL : kernel_base;
+	scan_end = (ti_addr + 0x200000 + 0xFFF) & ~0xFFFULL;
 
 	ks_dbg("[ksymless] scan 0x%lx-0x%lx kltable=0x%lx\n",
 		scan_start, scan_end, kltable_addr);
