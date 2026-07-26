@@ -24,6 +24,9 @@ the device for GKI 6.1 testing.
 Thanks to [haohao3001](https://github.com/haohao3001) for providing
 the device for GKI 6.12 testing.
 
+Thanks to [mx_wj](https://github.com/mx-wj) for providing
+the device for GKI 6.1 testing.
+
 ## license
 
 GPL-2.0
