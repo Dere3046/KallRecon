@@ -378,12 +378,21 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 					continue;
 
 				unsigned long rb, rb_addr;
-				if (!verify_offsets_rb(cand, len, &rb, &rb_addr)) {
+				int ok = verify_offsets_rb(cand, len, &rb, &rb_addr);
+				if (!ok) {
 					if (len < 5001 ||
 					    !verify_offsets_rb(cand, len - 1,
 						&rb, &rb_addr))
 						continue;
 					len--;
+				} else if (len > 5000) {
+					unsigned long rb2, a2;
+					if (verify_offsets_rb(cand, len - 1,
+						&rb2, &a2)) {
+						len--;
+						rb = rb2;
+						rb_addr = a2;
+					}
 				}
 
 				*best_cand = cand;
