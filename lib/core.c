@@ -465,15 +465,11 @@ static unsigned long find_token_index(unsigned long start)
 			unsigned long base = pg + pi * 0x1000;
 
 			for (int off = 512; off < 0x1000 + 512; off += 4) {
-				unsigned short *ti;
-				if (off < 0x1000) {
-					ti = (unsigned short *)((unsigned char *)buf + off - 512);
-				} else {
-					if (pi == 15)
-						break;
-					ti = (unsigned short *)((unsigned char *)
-						&bigbuf[(pi + 1) * 1024] + off - 0x1000 - 512);
-				}
+				if (off >= 0x1000 && pi == 15)
+					break;
+				unsigned short *ti =
+					(unsigned short *)((unsigned char *)buf +
+						off - 512);
 				if (!check_ti_strong(ti))
 					continue;
 				return base + off - 512;
