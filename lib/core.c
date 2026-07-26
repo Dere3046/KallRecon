@@ -433,8 +433,8 @@ static int discover_kallsyms(unsigned long ti_addr)
 		else
 			kltable_addr = ti_addr - 0x1000;
 	}
-	scan_start = kltable_addr > 0x200000 ?
-		(kltable_addr - 0x200000) & ~0xFFFULL : kernel_base;
+	scan_start = kltable_addr > 0x400000 ?
+		(kltable_addr - 0x400000) & ~0xFFFULL : kernel_base;
 	scan_end = (ti_addr + 0x200000 + 0xFFF) & ~0xFFFULL;
 
 	ks_dbg("[ksymless] scan 0x%lx-0x%lx kltable=0x%lx\n",
@@ -470,9 +470,8 @@ static unsigned long find_token_index(unsigned long start)
 				unsigned short *ti =
 					(unsigned short *)((unsigned char *)buf +
 						off - 512);
-				if (!check_ti_strong(ti))
-					continue;
-				return base + off - 512;
+				if (check_ti_strong(ti) || check_token_index(ti))
+					return base + off - 512;
 			}
 		}
 	}
@@ -625,6 +624,15 @@ ks_dbg("  kltable @ 0x%lx\n", kltable_addr);
 ks_dbg("  klmarks @ 0x%lx\n", klmarks_addr);
 ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 	ks_dbg("  layout  v%d\n", is_v1_layout ? 1 : 2);
+
+	if (klmarks_addr && klnum_val) {
+		unsigned int m0, m1;
+		int mok = !safe_read(&m0, (void *)klmarks_addr, 4) && m0 == 0;
+		if (mok && (klnum_val + 255) / 256 > 1)
+			mok = !safe_read(&m1, (void *)(klmarks_addr + 4), 4)
+				&& m1 >= 256;
+		ks_dbg("  markers verify: %s\n", mok ? "OK" : "MISMATCH");
+	}
 
 #ifdef KSYMLESS_CHECK
 	if (kltable_addr && klindex_addr) {
