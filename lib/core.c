@@ -392,8 +392,6 @@ static int scan_zerou32(unsigned long start, unsigned long end, int dir,
 				found = 1;
 				ks_dbg("[ksymless] hit dir=%d pg=0x%lx sorted=%d\n",
 					dir, base, len);
-				if (dir > 0)
-					return found;
 			}
 		}
 	}
@@ -405,21 +403,12 @@ static int discover_kallsyms(unsigned long ti_addr)
 	unsigned long best_cand = 0;
 	int best_len = 0;
 
-#if LINUX_VERSION_CODE >= KERNEL_VERSION(6, 4, 0)
-	if (scan_zerou32((ti_addr + 0x1000) & ~0xFFFULL,
+	if (scan_zerou32(ti_addr & ~0xFFFULL,
 			 ti_addr + 0x400000, 1, &best_cand, &best_len))
 		goto found;
 	if (scan_zerou32(ti_addr & ~0xFFFULL,
 			 kernel_base, -1, &best_cand, &best_len))
 		goto found;
-#else
-	if (scan_zerou32(ti_addr & ~0xFFFULL,
-			 kernel_base, -1, &best_cand, &best_len))
-		goto found;
-	if (scan_zerou32((ti_addr + 0x1000) & ~0xFFFULL,
-			 ti_addr + 0x400000, 1, &best_cand, &best_len))
-		goto found;
-#endif
 
 	ks_dbg("[ksymless] no offsets found\n");
 	return 0;
