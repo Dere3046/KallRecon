@@ -251,7 +251,7 @@ static int verify_offsets_rb(unsigned long cand, int len,
 			rb_addr = sgn ? base_rb + delta : base_rb - delta;
 			if (safe_read(&rb, (void *)rb_addr, 8))
 				continue;
-			if (rb_addr >= cand && rb_addr < cand + len * 4)
+			if (rb_addr >= cand && rb_addr + 8 <= cand + len * 4)
 				continue;
 			if ((rb & ~0x1FFFFFULL) != kernel_base)
 				continue;
@@ -260,7 +260,8 @@ static int verify_offsets_rb(unsigned long cand, int len,
 				int ok = 0;
 				unsigned int ns;
 				if (!safe_read(&ns, (void *)check, 4) &&
-				    ns == (unsigned int)len)
+				    (ns == (unsigned int)len ||
+				     ns == (unsigned int)(len - 1)))
 					ok = 1;
 				if (!ok) {
 					ok = 1;
@@ -377,8 +378,13 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 					continue;
 
 				unsigned long rb, rb_addr;
-				if (!verify_offsets_rb(cand, len, &rb, &rb_addr))
-					continue;
+				if (!verify_offsets_rb(cand, len, &rb, &rb_addr)) {
+					if (len < 5001 ||
+					    !verify_offsets_rb(cand, len - 1,
+						&rb, &rb_addr))
+						continue;
+					len--;
+				}
 
 				*best_cand = cand;
 				*best_len = len;
