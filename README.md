@@ -27,6 +27,9 @@ the device for GKI 6.12/5.15 testing.
 Thanks to [mx_wj](https://github.com/mx-wj) for providing
 the device for GKI 6.1 testing.
 
+Thanks to [pubglite55](https://github.com/pubglite55) for providing
+the device for GKI 5.15 testing.
+
 ## license
 
 GPL-2.0
