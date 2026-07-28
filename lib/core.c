@@ -500,7 +500,8 @@ ks_dbg("[ksymless] layout: offsets not found\n");
 		klnum_addr = (klbase_addr + 8 + 7) & ~7ULL;
 		{
 			u32 ns;
-			if (safe_read(&ns, (void *)klnum_addr, 4) || ns != klnum_val)
+			if (safe_read(&ns, (void *)klnum_addr, 4) ||
+			    (ns != klnum_val && ns != klnum_val - 1))
 				klnum_addr = 0;
 		}
 		klnames_addr = (klnum_addr + 4 + 7) & ~7ULL;
@@ -577,7 +578,7 @@ ks_dbg("[ksymless] layout: offsets not found\n");
 				unsigned int v32;
 				if (safe_read(&v32, (void *)addr, 4))
 					continue;
-				if (v32 == klnum_val) {
+				if (v32 == klnum_val || v32 == klnum_val - 1) {
 					klnum_addr = addr;
 					break;
 				}
