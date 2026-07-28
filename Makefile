@@ -1,12 +1,12 @@
 probe-objs := src/main.o lib/core.o src/verify.o
 test_probe-objs := test/test_main.o test/dbg.o lib/core.o
 
-ifeq ($(TARGET),test)
-obj-m := test_probe.o
-else
-obj-m := probe.o
-ccflags-y += -DKSYMLESS_DEBUG
-endif
+ ifeq ($(TARGET),test)
+ obj-m := test_probe.o
+ ccflags-y += -DKSYMLESS_DEBUG
+ else
+ obj-m := probe.o
+ endif
 
 ifeq ($(CHECK),1)
 ccflags-y += -DKSYMLESS_CHECK
