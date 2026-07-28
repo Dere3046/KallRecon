@@ -456,23 +456,26 @@ found:
 
 static unsigned long find_token_index(unsigned long start)
 {
-	unsigned long pg;
-	int off;
-
-	for (pg = start; ; pg += 0x1000) {
-		if (safe_read(bigbuf, (void *)pg, 0x1000 + 512))
+	for (unsigned long pg = start; ; pg += 16 * 0x1000) {
+		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
 			break;
 
-		for (off = 512; off < 0x1000 + 512; off += 4) {
-			unsigned short *ti =
-				(unsigned short *)((unsigned char *)bigbuf +
-					off - 512);
-			if (!check_ti_strong(ti))
-				continue;
-			return pg + off - 512;
+		for (int pi = 0; pi < 16; pi++) {
+			unsigned int *buf = &bigbuf[pi * 1024];
+			unsigned long base = pg + pi * 0x1000;
+
+			for (int off = 512; off < 0x1000 + 512; off += 4) {
+				if (off >= 0x1000 && pi == 15)
+					break;
+				unsigned short *ti =
+					(unsigned short *)((unsigned char *)buf +
+						off - 512);
+				if (!check_ti_strong(ti))
+					continue;
+				return base + off - 512;
+			}
 		}
 	}
-
 	return 0;
 }
 
