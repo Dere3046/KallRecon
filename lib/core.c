@@ -838,17 +838,25 @@ static unsigned long name_to_addr_linear(const char *name)
 	unsigned char *tt = tt_buf;
 	char nbuf[256];
 	unsigned long pg;
-	int idx;
+	int idx, hit = 0, decoded = 0;
 
-	if (safe_read(ti, (void *)klindex_addr, sizeof(ti_buf)))
+	ks_dbg("[ksymless] linear: search '%s' n=%u\n", name, klnum_val);
+
+	if (safe_read(ti, (void *)klindex_addr, sizeof(ti_buf))) {
+		ks_dbg("[ksymless] linear: ti load FAIL\n");
 		return 0;
-	if (safe_read(tt, (void *)kltable_addr, sizeof(tt_buf)))
+	}
+	if (safe_read(tt, (void *)kltable_addr, sizeof(tt_buf))) {
+		ks_dbg("[ksymless] linear: tt load FAIL\n");
 		return 0;
+	}
 
 	for (pg = klnames_addr & ~0xFFFFULL, idx = 0;
 	     idx < (int)klnum_val; pg += 16 * 0x1000) {
-		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
+		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000)) {
+			ks_dbg("[ksymless] linear: read@0x%lx FAIL idx=%d\n", pg, idx);
 			break;
+		}
 
 		const unsigned char *p = (const unsigned char *)bigbuf;
 		const unsigned char *end = p + 16 * 0x1000;
@@ -868,18 +876,21 @@ static unsigned long name_to_addr_linear(const char *name)
 				elen = (lb & 0x7F) | (*p++ << 7);
 			}
 
-			/* all encoded bytes must fit */
 			if (p + elen > end)
 				break;
 
+			decoded++;
 			expand_sym_buf(ti, tt, name_start, nbuf, sizeof(nbuf));
 			{
 				char *dot = strstr(nbuf, ".llvm.");
 				if (dot)
 					*dot = '\0';
 			}
-			if (strcmp(nbuf, name) == 0)
+			if (strcmp(nbuf, name) == 0) {
+				hit = 1;
+				ks_dbg("[ksymless] linear: HIT idx=%d\n", idx);
 				return sym_addr(idx);
+			}
 
 			p = name_start;
 			skip_name(&p);
@@ -887,6 +898,7 @@ static unsigned long name_to_addr_linear(const char *name)
 		}
 	}
 
+	ks_dbg("[ksymless] linear: done idx=%d decoded=%d hit=%d\n", idx, decoded, hit);
 	return 0;
 }
 
