@@ -1,5 +1,5 @@
-probe-objs := src/main.o lib/core.o src/verify.o
-test_probe-objs := test/test_main.o test/dbg.o lib/core.o
+probe-objs := src/main.o lib/core.o lib/slide.o src/verify.o
+test_probe-objs := test/test_main.o test/dbg.o lib/core.o lib/slide.o
 
  ifeq ($(TARGET),test)
  obj-m := test_probe.o

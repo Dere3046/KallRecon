@@ -818,27 +818,18 @@ static int expand_sym_buf(unsigned short *ti, unsigned char *tt,
 	return 1;
 }
 
-static int skip_name(const unsigned char **p)
-{
-	int lb = *(*p)++;
-	int elen = lb;
-	if (lb & 0x80) {
-		elen = (lb & 0x7F) | (*(*p)++ << 7);
-	}
-	*p += elen;
-	return 1;
-}
-
 static unsigned short ti_buf[256];
 static unsigned char tt_buf[2048];
+
+#include "slide.h"
 
 static unsigned long name_to_addr_linear(const char *name)
 {
 	unsigned short *ti = ti_buf;
 	unsigned char *tt = tt_buf;
 	char nbuf[256];
-	unsigned long pg;
 	int idx, hit = 0, decoded = 0;
+	struct slide_win w;
 
 	ks_dbg("[ksymless] linear: search '%s' n=%u\n", name, klnum_val);
 
@@ -851,63 +842,50 @@ static unsigned long name_to_addr_linear(const char *name)
 		return 0;
 	}
 
-	for (pg = klnames_addr & ~0xFFFFULL, idx = 0;
-	     idx < (int)klnum_val; pg += 16 * 0x1000) {
-		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000)) {
-			ks_dbg("[ksymless] linear: read@0x%lx FAIL idx=%d\n", pg, idx);
-			break;
+	if (slide_init(&w, klnames_addr, 64 * 1024, 512)) {
+		ks_dbg("[ksymless] linear: slide init FAIL\n");
+		return 0;
+	}
+
+	for (idx = 0; idx < (int)klnum_val; idx++) {
+		const unsigned char *name_start = slide_ptr(&w, slide_buf);
+		int lb = *name_start;
+		int elen = lb;
+		int hdr = 1;
+		if (lb & 0x80) {
+			elen = (lb & 0x7F) | (name_start[1] << 7);
+			hdr = 2;
 		}
 
-		const unsigned char *p = (const unsigned char *)bigbuf;
-		const unsigned char *end = p + 16 * 0x1000;
-		if (pg == (klnames_addr & ~0xFFFFULL))
-			p += klnames_addr - pg;
+		decoded++;
+		expand_sym_buf(ti, tt, name_start, nbuf, sizeof(nbuf));
+		{
+			char *dot = strstr(nbuf, ".llvm.");
+			if (dot)
+				*dot = '\0';
+		}
+		{
+			int sample = 0;
+			if (idx < 5)
+				sample = 1;
+			else if (idx == (int)klnum_val / 2)
+				sample = 1;
+			else if (idx >= (int)klnum_val - 5)
+				sample = 1;
+			else if (nbuf[0] == 'k' && nbuf[1] == 'a')
+				sample = 1;
+			if (sample)
+				ks_dbg("[ksymless] linear: [%d] '%s'\n", idx, nbuf);
+		}
+		if (strcmp(nbuf, name) == 0) {
+			hit = 1;
+			ks_dbg("[ksymless] linear: HIT idx=%d\n", idx);
+			return sym_addr(idx);
+		}
 
-		while (p + 3 < end && idx < (int)klnum_val) {
-			const unsigned char *name_start = p;
-			int lb = *p++;
-
-			if (p >= end)
-				break;
-			int elen = lb;
-			if (lb & 0x80) {
-				if (p >= end)
-					break;
-				elen = (lb & 0x7F) | (*p++ << 7);
-			}
-
-			if (p + elen > end)
-				break;
-
-			decoded++;
-			expand_sym_buf(ti, tt, name_start, nbuf, sizeof(nbuf));
-			{
-				char *dot = strstr(nbuf, ".llvm.");
-				if (dot)
-					*dot = '\0';
-			}
-			{
-				int sample = 0;
-				if (idx < 5)
-					sample = 1;
-				else if (idx == (int)klnum_val / 2)
-					sample = 1;
-				else if (idx >= (int)klnum_val - 5)
-					sample = 1;
-				else if (nbuf[0] == 'k' && nbuf[1] == 'a')
-					sample = 1;
-				if (sample)
-					ks_dbg("[ksymless] linear: [%d] '%s'\n", idx, nbuf);
-			}
-			if (strcmp(nbuf, name) == 0) {
-				hit = 1;
-				ks_dbg("[ksymless] linear: HIT idx=%d\n", idx);
-				return sym_addr(idx);
-			}
-
-			p = name_start;
-			skip_name(&p);
-			idx++;
+		if (slide_advance(&w, hdr + elen)) {
+			ks_dbg("[ksymless] linear: slide fail idx=%d\n", idx);
+			break;
 		}
 	}
 
