@@ -1,9 +1,10 @@
 # ksymless_Android
 
-ARM64 implementation of [ksymless](https://github.com/rota1001/ksymless) for Android GKI kernels.
-discovers kallsyms data and sys_call_table without exported kernel symbols.
+discovers and reconstructs the kallsyms symbol table from kernel
+image memory on ARM64 GKI. locates kallsyms_lookup_name to provide
+symbol resolution from within an LKM. depends only on sprint_symbol.
 
-kallsyms internals are described in [xcellerator's post](https://xcellerator.github.io/posts/linux_rootkits_11/).
+kallsyms internals: [xcellerator](https://xcellerator.github.io/posts/linux_rootkits_11/)
 
 ## requirements
 
