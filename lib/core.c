@@ -236,10 +236,21 @@ static int check_ti_strong(unsigned short *ti)
 			return 0;
 	return ti['b'] - ti['a'] == 2 && ti['z'] - ti['a'] == 50;
 }
-
 static int verify_offsets_rb(unsigned long cand, int len,
 			      unsigned long *rb_out, unsigned long *rb_addr_out)
 {
+	int skip = 0;
+	for (skip = 0; skip < 20; skip++) {
+		u32 zv;
+		if (safe_read(&zv, (void *)(cand + skip * 4), 4))
+			break;
+		if (zv != 0)
+			break;
+	}
+
+	unsigned long real_cand = cand + skip * 4;
+	int real_len = len - skip;
+
 	unsigned long base_rb = (cand + len * 4 + 7) & ~7ULL;
 	for (int delta = 0; delta < 4096; delta += 8) {
 		for (int sgn = 0; sgn < 2; sgn++) {
@@ -251,7 +262,8 @@ static int verify_offsets_rb(unsigned long cand, int len,
 			rb_addr = sgn ? base_rb + delta : base_rb - delta;
 			if (safe_read(&rb, (void *)rb_addr, 8))
 				continue;
-			if (rb_addr >= cand && rb_addr + 8 <= cand + len * 4)
+			if (rb_addr >= real_cand &&
+			    rb_addr + 8 <= real_cand + real_len * 4)
 				continue;
 			{
 				unsigned long check = (rb_addr + 8 + 7) & ~7ULL;
@@ -279,24 +291,18 @@ static int verify_offsets_rb(unsigned long cand, int len,
 					continue;
 			}
 
-			int skip = 0;
-			for (skip = 0; skip < 20; skip++) {
-				u32 zv;
-				if (safe_read(&zv, (void *)(cand + skip * 4), 4))
-					break;
-				if (zv != 0)
-					break;
-			}
-
 			int vok = 1;
 			for (int i = 0; i < 3 && vok; i++) {
 				u32 o;
-				if (safe_read(&o, (void *)(cand + (skip + i) * 4), 4))
+				if (safe_read(&o, (void *)(real_cand + i * 4), 4))
 					break;
 				char name[KSYM_SYMBOL_LEN];
 				sprint_symbol(name, rb + o);
-				if (name[0] == '0' && name[1] == 'x')
-					vok = 0;
+				if (name[0] == '0' && name[1] == 'x') {
+					sprint_symbol(name, (u64)o);
+					if (name[0] == '0' && name[1] == 'x')
+						vok = 0;
+				}
 			}
 			if (!vok)
 				continue;
@@ -308,6 +314,7 @@ static int verify_offsets_rb(unsigned long cand, int len,
 			return 1;
 		}
 	}
+
 	return 0;
 }
 
