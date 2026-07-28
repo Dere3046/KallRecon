@@ -4,11 +4,14 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include "../lib/core.h"
+#include "dbg.h"
 
 MODULE_LICENSE("GPL");
 
 static int __init test_probe_init(void)
 {
+	dbg_scan();
+
 	find_kallsyms_base();
 
 	if (!klnum_val || !ksymless_klp) {
