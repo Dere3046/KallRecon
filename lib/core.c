@@ -837,15 +837,12 @@ static unsigned long name_to_addr_linear(const char *name)
 	unsigned short *ti = ti_buf;
 	unsigned char *tt = tt_buf;
 	char nbuf[256];
-	unsigned long len, pg, limit;
+	unsigned long pg;
 	int idx;
 
-	len = strlen(name);
-	limit = kltable_addr > 0x1000 ? kltable_addr - 0x1000 : 0;
-
-	if (safe_read(ti, (void *)klindex_addr, sizeof(ti)))
+	if (safe_read(ti, (void *)klindex_addr, sizeof(ti_buf)))
 		return 0;
-	if (safe_read(tt, (void *)kltable_addr, sizeof(tt)))
+	if (safe_read(tt, (void *)kltable_addr, sizeof(tt_buf)))
 		return 0;
 
 	for (pg = klnames_addr & ~0xFFFFULL, idx = 0;
@@ -874,17 +871,6 @@ static unsigned long name_to_addr_linear(const char *name)
 			/* all encoded bytes must fit */
 			if (p + elen > end)
 				break;
-
-			unsigned char firstc = *p;
-			if (firstc < 256) {
-				const char *tok = (const char *)tt + ti[firstc];
-				if (tok[0] != name[0] || (len >= 2 &&
-				    tok[1] && tok[1] != name[1])) {
-					p += elen;
-					idx++;
-					continue;
-				}
-			}
 
 			expand_sym_buf(ti, tt, name_start, nbuf, sizeof(nbuf));
 			{
