@@ -760,6 +760,8 @@ static int expand_sym_buf(unsigned short *ti, unsigned char *tt,
 	unsigned int len = *enc++;
 	if (len & 0x80)
 		len = (len & 0x7F) | (*enc++ << 7);
+	if (len > 256U)
+		return 0;
 
 	int skipped = 0;
 	for (unsigned int i = 0; i < len && max > 1; i++) {
@@ -818,6 +820,12 @@ static unsigned long name_to_addr_linear(const char *name)
 		if (lb & 0x80) {
 			elen = (lb & 0x7F) | (name_start[1] << 7);
 			hdr = 2;
+		}
+		if ((unsigned int)(hdr + elen) > 256U ||
+		    w.off + hdr + elen > w.chunksz + w.margin) {
+			ks_dbg("[ksymless] linear: boundary fail idx=%d hdr=%d elen=%d\n",
+				idx, hdr, elen);
+			break;
 		}
 
 		decoded++;
