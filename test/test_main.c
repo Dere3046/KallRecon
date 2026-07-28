@@ -8,8 +8,13 @@
 
 MODULE_LICENSE("GPL");
 
+extern char sprint_symbol;
+
 static int __init test_probe_init(void)
 {
+	sprint_addr = (unsigned long)&sprint_symbol;
+	kernel_base = sprint_addr & ~0x1FFFFFULL;
+
 	dbg_scan();
 
 	find_kallsyms_base();
