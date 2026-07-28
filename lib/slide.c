@@ -10,7 +10,7 @@
 #include "core.h"
 #include "slide.h"
 
-#ifdef KSYMLESS_DEBUG
+#ifdef KALLRECON_DEBUG
 #define slide_dbg(fmt, ...) pr_info("[slide] " fmt, ##__VA_ARGS__)
 #else
 #define slide_dbg(fmt, ...) do {} while (0)

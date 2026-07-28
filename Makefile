@@ -1,15 +1,15 @@
-probe-objs := src/main.o lib/core.o lib/slide.o src/verify.o
+kallrecon-objs := src/main.o lib/core.o lib/slide.o src/verify.o
 test_probe-objs := test/test_main.o test/dbg.o lib/core.o lib/slide.o
 
  ifeq ($(TARGET),test)
  obj-m := test_probe.o
- ccflags-y += -DKSYMLESS_DEBUG
+ ccflags-y += -DKALLRECON_DEBUG
  else
- obj-m := probe.o
+ obj-m := kallrecon.o
  endif
 
 ifeq ($(CHECK),1)
-ccflags-y += -DKSYMLESS_CHECK
+ccflags-y += -DKALLRECON_CHECK
 endif
 
 ccflags-y += -std=gnu11

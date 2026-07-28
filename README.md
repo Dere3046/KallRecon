@@ -1,4 +1,4 @@
-# ksymless_Android
+# KallRecon
 
 discovers and reconstructs the kallsyms symbol table from kernel
 image memory on ARM64 GKI. locates kallsyms_lookup_name to provide
@@ -7,6 +7,13 @@ symbol resolution from within an LKM. inspired by
 sprint_symbol.
 
 on kallsyms: [xcellerator](https://xcellerator.github.io/posts/linux_rootkits_11/)
+
+## optional SCT discovery
+
+include `lib/sct.c` in your build to opt into sys_call_table
+discovery via stack walk. the module walks x29 frames up to
+do_el0_svc and decodes ADRP instructions to locate the SCT address.
+not needed for kallsyms discovery. see `lib/sct.h`.
 
 ## requirements
 

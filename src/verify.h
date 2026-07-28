@@ -8,7 +8,6 @@
 #ifndef VERIFY_H
 #define VERIFY_H
 
-void verify_sct(void);
 void verify_kallsyms(void);
 void dump_kallsyms_layout(void);
 

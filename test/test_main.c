@@ -19,12 +19,12 @@ static int __init test_probe_init(void)
 
 	find_kallsyms_base();
 
-	if (!klnum_val || !ksymless_klp) {
+	if (!klnum_val || !kallrecon_klp) {
 		pr_info("[test] bootstrap incomplete\n");
 		return -ENODATA;
 	}
 
-	unsigned long addr = ksymless_klp("_printk");
+	unsigned long addr = kallrecon_klp("_printk");
 	pr_info("[test] _printk @ 0x%lx (%u symbols)\n",
 		addr, klnum_val);
 

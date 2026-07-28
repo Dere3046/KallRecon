@@ -1,4 +1,4 @@
-# ksymless API
+# KallRecon API
 
 call `find_kallsyms_base` once. it discovers all kallsyms structures in raw
 kernel memory and populates the globals. after that use the lookup functions.
@@ -10,13 +10,24 @@ kernel memory and populates the globals. after that use the lookup functions.
 the one call that starts everything. scans kernel memory upwards from
 `sprint_symbol`, finds the token_index, token_table, offsets table,
 relative base, markers, names, num_syms, and optionally seqs. on success
-`klnum_val` is nonzero and `ksymless_klp` is ready.
+`klnum_val` is nonzero and `kallrecon_klp` is ready.
 
 if it fails all globals stay at zero. no partial state.
 
-## Symbol Lookup
+### key globals
 
-**`unsigned long (*ksymless_klp)(const char *name)`**
+`klnum_val` — total number of symbols discovered
+
+`klbase_val` — kernel text base, the value of `kallsyms_relative_base`
+
+`is_v1_layout` — 1 for pre-6.4 layout (offsets before token_index), 0 for
+6.4+ layout (offsets after token_index)
+
+`sprint_addr` — runtime address of `sprint_symbol`, the discovery anchor
+
+## Lookup
+
+**`unsigned long (*kallrecon_klp)(const char *name)`**
 
 function pointer to the kernel's own `kallsyms_lookup_name`. the fastest
 way to resolve a name. pass a symbol name string, get back the address or
@@ -29,7 +40,7 @@ ready after `find_kallsyms_base` succeeds.
 our own name to address lookup. on kernels that have the seqs table
 (6.1+) it uses binary search. on kernels without seqs (5.10/5.15) it
 falls back to a buffered linear scan of the names table. same calling
-convention as `ksymless_klp`. zero return means the name was not found.
+convention as `kallrecon_klp`. zero return means the name was not found.
 
 **`unsigned long sym_addr(int idx)`**
 
@@ -42,134 +53,9 @@ address to name reverse lookup. binary searches the sorted addresses
 table, decodes the compressed name and writes it into `buf`. at most
 `max` bytes are written. returns the sorted index.
 
-## Table Access
+## SCT (optional)
 
-**`int expand_sym(unsigned int off, char *buf, int max)`**
+include `lib/sct.c` and `lib/sct.h` for sys_call_table discovery via
+x29 stack walk. see `lib/sct.h`.
 
-decode one compressed symbol name from the names table at byte offset
-`off`. writes the uncompressed name into `buf` up to `max` bytes. the
-first character of the output is the symbol type prefix (T, t, B, D,
-etc). returns the number of bytes consumed from the names table.
-
-this is the building block for iterating the symbol table manually.
-
-**`unsigned int get_sym_seq(int idx)`**
-
-map alphabetical order index to address order index. on kernels with the
-seqs table (6.1+) this decodes a 3-byte entry. on kernels without seqs
-(5.10/5.15) this returns `idx` unchanged.
-
-use this before calling `get_sym_offset` when doing binary search by name.
-
-**`unsigned int get_sym_offset(unsigned int seq)`**
-
-map address order index to byte offset in the names table. uses the
-markers array for O(1) seeking to the correct 256-symbol block, then
-walks sequentially within the block.
-
-## Global State
-
-all globals are populated by `find_kallsyms_base`. a zero value means the
-structure was not found or discovery failed.
-
-### count and base
-
-`klnum_val` (unsigned int) — total number of symbols discovered
-
-`klbase_val` (unsigned long) — kernel text base address, the value of
-`kallsyms_relative_base`
-
-### layout version
-
-`is_v1_layout` (int) — 1 for the pre-6.4 layout where the offsets table
-is placed after the relative base and before the names and
-token_index. 0 for the 6.4+ layout where the offsets table is placed
-after the token_index. this affects how post-processing locates
-`klnum_addr`, `klnames_addr`, and `klseqs_addr`.
-
-### table addresses
-
-`klbase_addr` — where `klbase_val` is stored in kernel memory
-
-`kloffs_addr` — start of the `kallsyms_offsets` array
-
-`klindex_addr` — start of the `kallsyms_token_index` array (256 uint16)
-
-`kltable_addr` — start of the `kallsyms_token_table` array
-
-`klmarks_addr` — start of the `kallsyms_markers` array
-
-`klnames_addr` — start of the `kallsyms_names` array
-
-`klnum_addr` — where `kallsyms_num_syms` is stored
-
-### seqs
-
-`klseqs_addr` — start of the `kallsyms_seqs_of_names` array (3-byte
-entries). zero if the kernel has no seqs table (5.10/5.15)
-
-### anchor
-
-`sprint_addr` — runtime address of `sprint_symbol`, used as the fixed
-anchor for all discovery scans
-
-`kernel_base` — `sprint_addr` rounded down to the nearest 2MB boundary
-
-## Stack Walk
-
-**`unsigned long read_fp(void)`**
-
-reads the x29 frame pointer register. returns the current frame address.
-
-**`int walk_stack(struct fp_ret *out, int max)`**
-
-walks the stack from the current x29 frame. fills `out` with up to `max`
-entries. each `fp_ret` contains the return address at `fp + 8`. returns
-the number of frames walked. stops at null frame or on `safe_read` failure.
-
-**`void dump_frames(struct fp_ret *frames, int n)`**
-
-prints `n` frame addresses to the kernel log via `ks_dbg`. mostly for
-diagnosing which frames were captured before SCT scanning.
-
-## SCT Discovery
-
-**`unsigned long find_sct(struct fp_ret *frames, int nf)`**
-
-scans `nf` stack frames for the `do_el0_svc` entry point. when found,
-reads the sys_call_table address from the function's ADRP instructions.
-returns the SCT address or zero.
-
-**`void dump_sct(void)`**
-
-prints the first few sys_call_table entries to the kernel log via
-`ks_dbg`. useful for verifying the SCT was correctly located.
-
-**`int scan_adrp_add(unsigned long base, int ninst, struct adrp_entry *out, int max)`**
-
-scans `ninst` instructions starting at `base` for ADRP and ADD immediate
-pairs. fills `out` with up to `max` entries. each `adrp_entry` contains
-the computed target address, the PC of the ADRP, and an optional B target
-for branch instruction detection. returns the number of pairs found.
-
-### SCT globals
-
-`sys_call_table_addr` — the sys_call_table address discovered by `find_sct`
-
-`b_target_found` — branch target discovered during ADRP scanning
-
-## Helpers
-
-**`int safe_read(void *dst, const void *src, size_t sz)`**
-
-wraps `copy_from_kernel_nofault`. all kernel memory reads go through this.
-returns zero on success, nonzero on fault.
-
-**`int read_val(unsigned long addr, unsigned long *val)`**
-
-reads one unsigned long at `addr` into `val`. returns true if successful.
-
-**`int is_ktxt(unsigned long addr)`**
-
-returns true if `addr` is in the kernel text range (above
-`0xFFFF800000000000`) and a read from it succeeds.
+not needed for kallsyms discovery.

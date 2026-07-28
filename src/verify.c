@@ -65,32 +65,6 @@ static unsigned long resolve_addr(const char *name)
 	return ret;
 }
 
-void verify_sct(void)
-{
-	unsigned long ref;
-
-	if (!sys_call_table_addr)
-		return;
-
-	ref = resolve_addr("sys_call_table");
-	if (!ref && kprobe_ok < 0) {
-		pr_info("[ksymless] SCT: kprobe unavailable, skip\n");
-		return;
-	}
-	if (!ref) {
-		unsigned long addr = resolve_addr("kallsyms_lookup_name");
-		if (!addr) {
-			pr_info("[ksymless] SCT: lookup_name not found\n");
-			return;
-		}
-		ref = (unsigned long)((unsigned long (*)(const char *))addr)("sys_call_table");
-	}
-
-	pr_info("[ksymless] SCT: ours=0x%lx kprobe=0x%lx %s\n",
-		sys_call_table_addr, ref,
-		sys_call_table_addr == ref ? "MATCH" : "MISMATCH");
-}
-
 void verify_kallsyms(void)
 {
 	unsigned long test_addr;
@@ -98,26 +72,26 @@ void verify_kallsyms(void)
 
 	test_addr = resolve_addr("kallsyms_lookup_name");
 	if (!test_addr) {
-		pr_info("[ksymless] verify: kprobe unavailable\n");
+		pr_info("[kallrecon] verify: kprobe unavailable\n");
 		return;
 	}
 
 	if (!klnum_val || !kloffs_addr || !klbase_addr ||
 	    !klnames_addr || !kltable_addr || !klindex_addr) {
-		pr_info("[ksymless] verify: kallsyms data incomplete\n");
+		pr_info("[kallrecon] verify: kallsyms data incomplete\n");
 		return;
 	}
 
-	pr_info("[ksymless] verify: bootstrapping...\n");
+	pr_info("[kallrecon] verify: bootstrapping...\n");
 
 	sprint_symbol_no_offset(truth, test_addr);
 
 	int idx = sym_name_at(test_addr, our, sizeof(our));
-	pr_info("[ksymless] verify: addr->name '%s' %s\n",
+	pr_info("[kallrecon] verify: addr->name '%s' %s\n",
 		our, strcmp(truth, our) == 0 ? "MATCH" : "MISMATCH");
 
 	unsigned long lookup = kallsyms_name_to_addr("kallsyms_lookup_name");
-	pr_info("[ksymless] verify: name->addr 0x%lx %s\n",
+	pr_info("[kallrecon] verify: name->addr 0x%lx %s\n",
 		lookup,
 		lookup == test_addr ? "MATCH" : "MISMATCH");
 
@@ -126,7 +100,7 @@ void verify_kallsyms(void)
 void dump_kallsyms_layout(void)
 {
 	if (!klbase_addr || !kloffs_addr) {
-		pr_info("[ksymless] layout: insufficient data\n");
+		pr_info("[kallrecon] layout: insufficient data\n");
 		return;
 	}
 
@@ -134,5 +108,5 @@ void dump_kallsyms_layout(void)
 	unsigned int num = (unsigned int)(diff / 4);
 	unsigned int m_cnt = (num + 255) / 256;
 
-	pr_info("[ksymless] layout: %u symbols, %u markers\n", num, m_cnt);
+	pr_info("[kallrecon] layout: %u symbols, %u markers\n", num, m_cnt);
 }

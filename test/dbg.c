@@ -463,12 +463,12 @@ static void dbg_discover(unsigned long ti_addr)
 		unsigned long addr = kallsyms_name_to_addr("kallsyms_lookup_name");
 		pr_info("[dbg] kallsyms_lookup_name @ 0x%lx\n", addr);
 		if (addr) {
-			ksymless_klp = (unsigned long (*)(const char *))addr;
+			kallrecon_klp = (unsigned long (*)(const char *))addr;
 
-			unsigned long klp_addr = ksymless_klp("_printk");
+			unsigned long klp_addr = kallrecon_klp("_printk");
 			pr_info("[dbg] _printk @ 0x%lx\n", klp_addr);
 
-			unsigned long sct_addr = ksymless_klp("sprint_symbol");
+			unsigned long sct_addr = kallrecon_klp("sprint_symbol");
 			pr_info("[dbg] sprint_symbol @ 0x%lx (self=0x%lx delta=%ld)\n",
 				sct_addr, sprint_addr, (long)(sct_addr - sprint_addr));
 		}
@@ -484,7 +484,7 @@ static void dbg_discover(unsigned long ti_addr)
 	pr_info("[dbg] klmarks @ 0x%lx\n", klmarks_addr);
 	pr_info("[dbg] klnames @ 0x%lx\n", klnames_addr);
 	pr_info("[dbg] layout  v%d\n", is_v1_layout ? 1 : 2);
-	pr_info("[dbg] klp     %ps\n", ksymless_klp);
+	pr_info("[dbg] klp     %ps\n", kallrecon_klp);
 }
 
 /* --- step 1: find token_index --- */

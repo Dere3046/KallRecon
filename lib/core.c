@@ -10,14 +10,10 @@
 #include <linux/uaccess.h>
 #include <linux/kallsyms.h>
 #include <linux/version.h>
-#include <asm/compiler.h>
-#ifndef ptrauth_strip_kernel_insn_pac
-#define ptrauth_strip_kernel_insn_pac(x) (x)
-#endif
 #include "core.h"
 #include "slide.h"
 
-#ifdef KSYMLESS_DEBUG
+#ifdef KALLRECON_DEBUG
 #define ks_dbg(fmt, ...) pr_info(fmt, ##__VA_ARGS__)
 #else
 #define ks_dbg(fmt, ...) do {} while (0)
@@ -26,176 +22,6 @@
 int safe_read(void *dst, const void *src, size_t sz)
 {
 	return copy_from_kernel_nofault(dst, src, sz);
-}
-
-unsigned long read_fp(void)
-{
-	unsigned long fp;
-	asm volatile("mov %0, x29\n" : "=r"(fp));
-	return fp;
-}
-
-int is_ktxt(unsigned long addr)
-{
-	unsigned long v;
-	if (addr < 0xFFFF800000000000ULL)
-		return 0;
-	return read_val(addr, &v);
-}
-
-int read_val(unsigned long addr, unsigned long *val)
-{
-	return !safe_read(val, (void *)addr, sizeof(*val));
-}
-
-int walk_stack(struct fp_ret *out, int max)
-{
-	unsigned long fp = read_fp();
-	unsigned long tmp;
-	int n = 0;
-
-	for (int i = 0; i < max; i++) {
-		if (!fp)
-			break;
-		if (safe_read(&tmp, (void *)(fp + 8), sizeof(tmp)))
-			break;
-		out[n].addr = ptrauth_strip_kernel_insn_pac(tmp);
-		n++;
-		if (safe_read(&fp, (void *)fp, sizeof(fp)))
-			break;
-	}
-	return n;
-}
-
-void dump_frames(struct fp_ret *frames, int n)
-{
-ks_dbg("[ksymless] x29 stack (%d frames):\n", n);
-	for (int i = 0; i < n; i++)
-ks_dbg("  [%2d] 0x%lx\n", i, frames[i].addr);
-}
-
-unsigned long sys_call_table_addr;
-unsigned long b_target_found;
-
-static unsigned int adrp_buf[MAX_SCAN];
-
-int scan_adrp_add(unsigned long base, int ninst,
-		  struct adrp_entry *out, int max)
-{
-	int found = 0;
-
-	if (ninst > MAX_SCAN)
-		ninst = MAX_SCAN;
-	if (safe_read(adrp_buf, (void *)base, ninst * 4))
-		return 0;
-
-	for (int i = 0; i < ninst - 2 && found < max; i++) {
-		unsigned int adrp = adrp_buf[i];
-		if ((adrp & 0x9F000000) != 0x90000000)
-			continue;
-
-		int rd = adrp & 0x1F;
-		unsigned int nxt = adrp_buf[i + 1];
-		unsigned long imm12;
-		int valid = 0;
-
-		if ((nxt & 0xFFC00000) == 0x91000000)
-			valid = ((nxt >> 5) & 0x1F) == rd &&
-				(nxt & 0x1F) == rd;
-		if (!valid && (nxt & 0xFFC00000) == 0xF9400000)
-			valid = ((nxt >> 5) & 0x1F) == rd &&
-				(nxt & 0x1F) == rd;
-		if (!valid)
-			continue;
-
-		imm12 = (nxt >> 10) & 0xFFF;
-		unsigned long immhi = (adrp >> 5) & 0x7FFFF;
-		unsigned long immlo = (adrp >> 29) & 3;
-		unsigned long imm = (immhi << 2) | immlo;
-		unsigned long pc = base + i * 4;
-
-		out[found].pc = pc;
-		out[found].target = (pc & ~0xFFF) + (imm << 12) + imm12;
-		out[found].rd = rd;
-		out[found].has_b = 0;
-		out[found].b_target = 0;
-
-		unsigned int bop = adrp_buf[i + 2];
-		if ((bop & 0xFC000000) == 0x14000000) {
-			long imm26 = bop & 0x3FFFFFF;
-			if (imm26 & 0x2000000)
-				imm26 |= ~0x3FFFFFF;
-			out[found].has_b = 1;
-			out[found].b_target = pc + 2 * 4 + imm26 * 4;
-		} else if ((bop & 0xFC000000) == 0x94000000) {
-			long imm26 = bop & 0x3FFFFFF;
-			if (imm26 & 0x2000000)
-				imm26 |= ~0x3FFFFFF;
-			out[found].has_b = 2;
-			out[found].b_target = pc + 2 * 4 + imm26 * 4;
-		}
-
-		found++;
-	}
-	return found;
-}
-
-static int check_sct(unsigned long addr)
-{
-	unsigned long v;
-	for (int i = 0; i < 20; i++) {
-		if (!read_val(addr + i * 8, &v))
-			return 0;
-		if (!is_ktxt(v))
-			return 0;
-	}
-	return 1;
-}
-
-unsigned long find_sct(struct fp_ret *frames, int nf)
-{
-	struct adrp_entry adrps[MAX_ADRP];
-	int na;
-	unsigned long best = 0;
-
-ks_dbg("[ksymless] scanning frames for do_el0_svc:\n");
-
-	for (int i = nf - 1; i >= 0; i--) {
-		unsigned long addr = frames[i].addr;
-		if (addr < 0xFFFF800000000000ULL)
-			continue;
-		unsigned long base = addr - 128;
-		na = scan_adrp_add(base, MAX_SCAN, adrps, MAX_ADRP);
-		if (!na)
-			continue;
-
-		for (int j = 0; j < na; j++) {
-			if (!adrps[j].has_b)
-				continue;
-			unsigned long sct = adrps[j].target;
-			if (!check_sct(sct))
-				continue;
-ks_dbg("[ksymless] SCT candidate @ 0x%lx\n", sct);
-			if (!best) {
-				best = sct;
-				sys_call_table_addr = sct;
-				b_target_found = adrps[j].b_target;
-			}
-		}
-	}
-
-	if (!best)
-ks_dbg("[ksymless] SCT not found\n");
-	return best;
-}
-
-void dump_sct(void)
-{
-	unsigned long v;
-ks_dbg("[ksymless] sys_call_table entries:\n");
-	for (int i = 0; i < 8; i++)
-		if (read_val(sys_call_table_addr + i * 8, &v))
-ks_dbg("  [%3d] 0x%lx\n", i, v);
 }
 
 unsigned long sprint_addr;
@@ -213,7 +39,7 @@ unsigned long klnum_addr;
 
 int is_v1_layout;
 
-unsigned long (*ksymless_klp)(const char *name);
+unsigned long (*kallrecon_klp)(const char *name);
 
 static unsigned int bigbuf[16 * 1024];
 
@@ -372,7 +198,7 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 				klbase_addr = rb_addr;
 				klbase_val = rb;
 				found = 1;
-				ks_dbg("[ksymless] hit pg=0x%lx sorted=%d\n",
+				ks_dbg("[kallrecon] hit pg=0x%lx sorted=%d\n",
 					(unsigned long)(cand & ~0xFFFULL), len);
 			}
 		}
@@ -418,19 +244,19 @@ static int discover_kallsyms(unsigned long ti_addr)
 		(kltable_addr - 0x400000) & ~0xFFFULL : kernel_base;
 	scan_end = (ti_addr + 0x200000 + 0xFFF) & ~0xFFFULL;
 
-	ks_dbg("[ksymless] scan 0x%lx-0x%lx kltable=0x%lx\n",
+	ks_dbg("[kallrecon] scan 0x%lx-0x%lx kltable=0x%lx\n",
 		scan_start, scan_end, kltable_addr);
 
 	if (scan_zerou32(scan_start, scan_end, &best_cand, &best_len))
 		goto found;
 
-	ks_dbg("[ksymless] no offsets found\n");
+	ks_dbg("[kallrecon] no offsets found\n");
 	return 0;
 
 found:
 	klindex_addr = ti_addr;
 	is_v1_layout = (kloffs_addr < ti_addr) ? 1 : 0;
-	ks_dbg("[ksymless] discovered: sorted=%u v%d\n",
+	ks_dbg("[kallrecon] discovered: sorted=%u v%d\n",
 		klnum_val, is_v1_layout ? 1 : 2);
 	return 1;
 }
@@ -482,17 +308,17 @@ void find_kallsyms_base(void)
 	kernel_base = sprint_addr & ~0x1FFFFFULL;
 	klbase_val = kernel_base;
 
-ks_dbg("[ksymless] sprint=0x%lx kernel_base=0x%lx\n",
+ks_dbg("[kallrecon] sprint=0x%lx kernel_base=0x%lx\n",
 		sprint_addr, kernel_base);
 
 	unsigned long ti_addr = find_token_index(sprint_addr & ~0xFFFULL);
 	if (!ti_addr) {
-ks_dbg("[ksymless] token_index not found\n");
+ks_dbg("[kallrecon] token_index not found\n");
 		return;
 	}
-ks_dbg("[ksymless] ti=0x%lx\n", ti_addr);
+ks_dbg("[kallrecon] ti=0x%lx\n", ti_addr);
 	if (!discover_kallsyms(ti_addr)) {
-ks_dbg("[ksymless] layout: offsets not found\n");
+ks_dbg("[kallrecon] layout: offsets not found\n");
 		return;
 	}
 
@@ -589,7 +415,7 @@ ks_dbg("[ksymless] layout: offsets not found\n");
 			klnames_addr = (klnum_addr + 4 + 7) & ~7ULL;
 	}
 
-ks_dbg("[ksymless] kallsyms data:\n");
+ks_dbg("[kallrecon] kallsyms data:\n");
 ks_dbg("  klbase  @ 0x%lx = 0x%lx\n", klbase_addr, klbase_val);
 ks_dbg("  kloffs  @ 0x%lx\n", kloffs_addr);
 ks_dbg("  klnum   @ 0x%lx = %u\n", klnum_addr, klnum_val);
@@ -600,7 +426,7 @@ ks_dbg("  klmarks @ 0x%lx\n", klmarks_addr);
 ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 	ks_dbg("  layout  v%d\n", is_v1_layout ? 1 : 2);
 
-#ifdef KSYMLESS_CHECK
+#ifdef KALLRECON_CHECK
 	if (kltable_addr && klindex_addr) {
 		unsigned short off0;
 		unsigned char c;
@@ -656,7 +482,7 @@ ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 	if (klbase_addr && kloffs_addr) {
 		unsigned long addr = kallsyms_name_to_addr("kallsyms_lookup_name");
 		if (addr)
-			ksymless_klp = (unsigned long (*)(const char *))addr;
+			kallrecon_klp = (unsigned long (*)(const char *))addr;
 	}
 }
 
@@ -796,19 +622,19 @@ static unsigned long name_to_addr_linear(const char *name)
 	int idx, hit = 0, decoded = 0;
 	struct slide_win w;
 
-	ks_dbg("[ksymless] linear: search '%s' n=%u\n", name, klnum_val);
+	ks_dbg("[kallrecon] linear: search '%s' n=%u\n", name, klnum_val);
 
 	if (safe_read(ti, (void *)klindex_addr, sizeof(ti_buf))) {
-		ks_dbg("[ksymless] linear: ti load FAIL\n");
+		ks_dbg("[kallrecon] linear: ti load FAIL\n");
 		return 0;
 	}
 	if (safe_read(tt, (void *)kltable_addr, sizeof(tt_buf))) {
-		ks_dbg("[ksymless] linear: tt load FAIL\n");
+		ks_dbg("[kallrecon] linear: tt load FAIL\n");
 		return 0;
 	}
 
 	if (slide_init(&w, klnames_addr, 64 * 1024, 512)) {
-		ks_dbg("[ksymless] linear: slide init FAIL\n");
+		ks_dbg("[kallrecon] linear: slide init FAIL\n");
 		return 0;
 	}
 
@@ -823,7 +649,7 @@ static unsigned long name_to_addr_linear(const char *name)
 		}
 		if ((unsigned int)(hdr + elen) > 256U ||
 		    w.off + hdr + elen > w.chunksz + w.margin) {
-			ks_dbg("[ksymless] linear: boundary fail idx=%d hdr=%d elen=%d\n",
+			ks_dbg("[kallrecon] linear: boundary fail idx=%d hdr=%d elen=%d\n",
 				idx, hdr, elen);
 			break;
 		}
@@ -846,21 +672,21 @@ static unsigned long name_to_addr_linear(const char *name)
 			else if (nbuf[0] == 'k' && nbuf[1] == 'a')
 				sample = 1;
 			if (sample)
-				ks_dbg("[ksymless] linear: [%d] '%s'\n", idx, nbuf);
+				ks_dbg("[kallrecon] linear: [%d] '%s'\n", idx, nbuf);
 		}
 		if (strcmp(nbuf, name) == 0) {
 			hit = 1;
-			ks_dbg("[ksymless] linear: HIT idx=%d\n", idx);
+			ks_dbg("[kallrecon] linear: HIT idx=%d\n", idx);
 			return sym_addr(idx);
 		}
 
 		if (slide_advance(&w, hdr + elen)) {
-			ks_dbg("[ksymless] linear: slide fail idx=%d\n", idx);
+			ks_dbg("[kallrecon] linear: slide fail idx=%d\n", idx);
 			break;
 		}
 	}
 
-	ks_dbg("[ksymless] linear: done idx=%d decoded=%d hit=%d\n", idx, decoded, hit);
+	ks_dbg("[kallrecon] linear: done idx=%d decoded=%d hit=%d\n", idx, decoded, hit);
 	return 0;
 }
 

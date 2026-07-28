@@ -14,30 +14,20 @@
 #include "verify.h"
 
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("ksymless ARM64 probe");
+MODULE_DESCRIPTION("KallRecon ARM64 probe");
 
 static int __init probe_init(void)
 {
-	struct fp_ret frames[MAX_FP];
-	int nf;
-
-	pr_info("[ksymless] init\n");
-
-	nf = walk_stack(frames, MAX_FP);
-	dump_frames(frames, nf);
-
-	if (find_sct(frames, nf))
-		dump_sct();
+	pr_info("[kallrecon] init\n");
 
 	find_kallsyms_base();
 	dump_kallsyms_layout();
 
 	if (!kloffs_addr) {
-		pr_info("[ksymless] discovery failed\n");
+		pr_info("[kallrecon] discovery failed\n");
 		return -ENODATA;
 	}
 
-	verify_sct();
 	verify_kallsyms();
 
 	return 0;
@@ -45,7 +35,7 @@ static int __init probe_init(void)
 
 static void __exit probe_exit(void)
 {
-	pr_info("[ksymless] exit\n");
+	pr_info("[kallrecon] exit\n");
 }
 
 module_init(probe_init);
