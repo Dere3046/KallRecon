@@ -53,9 +53,4 @@ address to name reverse lookup. binary searches the sorted addresses
 table, decodes the compressed name and writes it into `buf`. at most
 `max` bytes are written. returns the sorted index.
 
-## SCT (optional)
 
-include `lib/sct.c` and `lib/sct.h` for sys_call_table discovery via
-x29 stack walk. see `lib/sct.h`.
-
-not needed for kallsyms discovery.
