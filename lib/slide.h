@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
+/*
+ * slide.h
+ *
+ * Copyright (C) 2026 dere3046
+ */
+
 #ifndef SLIDE_H
 #define SLIDE_H
 
@@ -17,9 +23,14 @@ int slide_init(struct slide_win *w, unsigned long pos,
 	       unsigned int chunksz, unsigned int margin);
 int slide_advance(struct slide_win *w, unsigned int n);
 
-static inline void *slide_ptr(struct slide_win *w, const void *buf)
+static inline void *slide_ptr(const struct slide_win *w, const void *buf)
 {
 	return (unsigned char *)buf + w->off;
+}
+
+static inline unsigned long slide_addr(const struct slide_win *w)
+{
+	return w->addr + w->off;
 }
 
 #endif

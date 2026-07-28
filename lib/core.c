@@ -15,6 +15,7 @@
 #define ptrauth_strip_kernel_insn_pac(x) (x)
 #endif
 #include "core.h"
+#include "slide.h"
 
 #ifdef KSYMLESS_DEBUG
 #define ks_dbg(fmt, ...) pr_info(fmt, ##__VA_ARGS__)
@@ -322,77 +323,48 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 			 unsigned long *best_cand, int *best_len)
 {
 	int found = 0;
+	struct slide_win w;
 
-	for (unsigned long pg = start; pg < end; pg += 16 * 0x1000) {
-		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
+	if (slide_init(&w, start, 64 * 1024, 512))
+		return 0;
+
+	for (;;) {
+		u32 v;
+		unsigned long addr = slide_addr(&w);
+		if (addr >= end)
+			break;
+
+		v = *(u32 *)slide_ptr(&w, slide_buf);
+		if (v != 0) {
+			if (slide_advance(&w, 4))
+				break;
 			continue;
+		}
 
-		for (int pi = 0; pi < 16; pi++) {
-			unsigned int *buf = &bigbuf[pi * 1024];
-			unsigned long base = pg + pi * 0x1000;
+		unsigned long cand = addr;
+		int len = 0, prev = -1;
 
-			for (int off = 0; off < 0x1000; off += 4) {
-				if (buf[off / 4] != 0)
-					continue;
+		for (;;) {
+			unsigned long ext_addr = slide_addr(&w);
+			if (ext_addr >= end || len >= 500000)
+				break;
+			v = *(u32 *)slide_ptr(&w, slide_buf);
+			if ((int)v < prev)
+				break;
+			prev = (int)v;
+			len++;
+			if (slide_advance(&w, 4))
+				break;
+		}
 
-			unsigned long cand = base + off;
-				int len = 0, prev = -1;
-				int max_i = (4096 - off) / 4;
-				for (int i = 0; i < max_i; i++) {
-					unsigned int v = buf[(off + i * 4) / 4];
-					if ((int)v < prev) {
-						len = i;
-						goto count_done;
-					}
-					prev = (int)v;
-				}
-				len = max_i;
+		if (len >= 5000 && len > *best_len) {
+			unsigned long kbase_hi =
+				kernel_base & 0xFFFFFFFF00000000ULL;
+			if ((prev | kbase_hi) == kernel_base)
+				len--;
 
-				for (int chunk = pi + 1; chunk < 16 && len < 500000;
-				     chunk++) {
-					unsigned int *pbuf = &bigbuf[chunk * 1024];
-					for (int i = 0; i < 1024 && len < 500000; i++) {
-						unsigned int v = pbuf[i];
-						if ((int)v < prev)
-							goto count_done;
-						prev = (int)v;
-						len++;
-					}
-				}
-
-				for (unsigned long pg2 = base + (16 - pi) * 0x1000;
-				     len < 500000; pg2 += 16 * 0x1000) {
-					if (safe_read(bigbuf, (void *)pg2, 16 * 0x1000))
-						break;
-					for (int chunk = 0; chunk < 16 && len < 500000;
-					     chunk++) {
-						unsigned int *pbuf =
-							&bigbuf[chunk * 1024];
-						for (int i = 0; i < 1024 && len < 500000;
-						     i++) {
-							unsigned int v = pbuf[i];
-							if ((int)v < prev)
-								goto count_done;
-							prev = (int)v;
-							len++;
-						}
-					}
-				}
-			count_done:
-				if (len < 5000 || len <= *best_len)
-					continue;
-
-				{
-					unsigned long kbase_hi =
-						kernel_base & 0xFFFFFFFF00000000ULL;
-					if ((prev | kbase_hi) == kernel_base)
-						len--;
-				}
-
-				unsigned long rb, rb_addr;
-				if (!verify_offsets_rb(cand, len, &rb, &rb_addr))
-					continue;
-
+			unsigned long rb, rb_addr;
+			if (verify_offsets_rb(cand, len, &rb, &rb_addr)) {
 				*best_cand = cand;
 				*best_len = len;
 				kloffs_addr = cand;
@@ -401,10 +373,14 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 				klbase_val = rb;
 				found = 1;
 				ks_dbg("[ksymless] hit pg=0x%lx sorted=%d\n",
-					base, len);
+					(unsigned long)(cand & ~0xFFFULL), len);
 			}
 		}
+
+		if (slide_init(&w, cand + 4, 64 * 1024, 512))
+			break;
 	}
+
 	return found;
 }
 
@@ -461,25 +437,17 @@ found:
 
 static unsigned long find_token_index(unsigned long start)
 {
-	for (unsigned long pg = start; ; pg += 16 * 0x1000) {
-		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
+	struct slide_win w;
+
+	if (slide_init(&w, start, 64 * 1024, 512))
+		return 0;
+
+	for (;;) {
+		unsigned short *ti = (unsigned short *)slide_ptr(&w, slide_buf);
+		if (check_ti_strong(ti))
+			return slide_addr(&w);
+		if (slide_advance(&w, 4))
 			break;
-
-		for (int pi = 0; pi < 16; pi++) {
-			unsigned int *buf = &bigbuf[pi * 1024];
-			unsigned long base = pg + pi * 0x1000;
-
-			for (int off = 512; off < 0x1000 + 512; off += 4) {
-				if (off >= 0x1000 && pi == 15)
-					break;
-				unsigned short *ti =
-					(unsigned short *)((unsigned char *)buf +
-						off - 512);
-				if (!check_ti_strong(ti))
-					continue;
-				return base + off - 512;
-			}
-		}
 	}
 	return 0;
 }
@@ -791,6 +759,9 @@ unsigned int get_sym_offset(unsigned int seq)
 	return p - (const u8 *)klnames_addr;
 }
 
+static unsigned short ti_buf[256];
+static unsigned char tt_buf[2048];
+
 static int expand_sym_buf(unsigned short *ti, unsigned char *tt,
 			  const unsigned char *enc, char *buf, int max)
 {
@@ -800,8 +771,13 @@ static int expand_sym_buf(unsigned short *ti, unsigned char *tt,
 
 	int skipped = 0;
 	for (unsigned int i = 0; i < len && max > 1; i++) {
-		const char *tp = (const char *)tt + ti[*enc++];
+		unsigned char c = *enc++;
+		if (c >= 256U || ti[c] >= sizeof(tt_buf))
+			return 0;
+		const char *tp = (const char *)tt + ti[c];
 		while (*tp) {
+			if ((const unsigned char *)tp - tt >= sizeof(tt_buf))
+				return 0;
 			if (skipped) {
 				if (max <= 1)
 					return 0;
@@ -817,11 +793,6 @@ static int expand_sym_buf(unsigned short *ti, unsigned char *tt,
 		*buf = '\0';
 	return 1;
 }
-
-static unsigned short ti_buf[256];
-static unsigned char tt_buf[2048];
-
-#include "slide.h"
 
 static unsigned long name_to_addr_linear(const char *name)
 {

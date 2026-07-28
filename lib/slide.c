@@ -1,4 +1,10 @@
 // SPDX-License-Identifier: GPL-2.0-only
+/*
+ * slide.c
+ *
+ * Copyright (C) 2026 dere3046
+ */
+
 #include <linux/types.h>
 #include <linux/printk.h>
 #include "core.h"
