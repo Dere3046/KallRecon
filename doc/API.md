@@ -114,3 +114,62 @@ entries). zero if the kernel has no seqs table (5.10/5.15)
 anchor for all discovery scans
 
 `kernel_base` — `sprint_addr` rounded down to the nearest 2MB boundary
+
+## Stack Walk
+
+**`unsigned long read_fp(void)`**
+
+reads the x29 frame pointer register. returns the current frame address.
+
+**`int walk_stack(struct fp_ret *out, int max)`**
+
+walks the stack from the current x29 frame. fills `out` with up to `max`
+entries. each `fp_ret` contains the return address at `fp + 8`. returns
+the number of frames walked. stops at null frame or on `safe_read` failure.
+
+**`void dump_frames(struct fp_ret *frames, int n)`**
+
+prints `n` frame addresses to the kernel log via `ks_dbg`. mostly for
+diagnosing which frames were captured before SCT scanning.
+
+## SCT Discovery
+
+**`unsigned long find_sct(struct fp_ret *frames, int nf)`**
+
+scans `nf` stack frames for the `do_el0_svc` entry point. when found,
+reads the sys_call_table address from the function's ADRP instructions.
+returns the SCT address or zero.
+
+**`void dump_sct(void)`**
+
+prints the first few sys_call_table entries to the kernel log via
+`ks_dbg`. useful for verifying the SCT was correctly located.
+
+**`int scan_adrp_add(unsigned long base, int ninst, struct adrp_entry *out, int max)`**
+
+scans `ninst` instructions starting at `base` for ADRP and ADD immediate
+pairs. fills `out` with up to `max` entries. each `adrp_entry` contains
+the computed target address, the PC of the ADRP, and an optional B target
+for branch instruction detection. returns the number of pairs found.
+
+### SCT globals
+
+`sys_call_table_addr` — the sys_call_table address discovered by `find_sct`
+
+`b_target_found` — branch target discovered during ADRP scanning
+
+## Helpers
+
+**`int safe_read(void *dst, const void *src, size_t sz)`**
+
+wraps `copy_from_kernel_nofault`. all kernel memory reads go through this.
+returns zero on success, nonzero on fault.
+
+**`int read_val(unsigned long addr, unsigned long *val)`**
+
+reads one unsigned long at `addr` into `val`. returns true if successful.
+
+**`int is_ktxt(unsigned long addr)`**
+
+returns true if `addr` is in the kernel text range (above
+`0xFFFF800000000000`) and a read from it succeeds.
