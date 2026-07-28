@@ -189,6 +189,18 @@ static void dbg_discover(unsigned long ti_addr)
 
 					/* verify rb */
 					unsigned long base_rb = (cand + len * 4 + 7) & ~7ULL;
+
+					int dbskip = 0;
+					for (dbskip = 0; dbskip < 20; dbskip++) {
+						u32 zv;
+						if (dbg_safe_read(&zv, (void *)(cand + dbskip * 4), 4))
+							break;
+						if (zv != 0)
+							break;
+					}
+					unsigned long real_cand = cand + dbskip * 4;
+					int real_len = len - dbskip;
+
 					unsigned long rb, rb_addr;
 					int rb_ok = 0;
 					for (int delta = 0; delta < 4096 && !rb_ok; delta += 8) {
@@ -196,19 +208,28 @@ static void dbg_discover(unsigned long ti_addr)
 							if (delta == 0 && sgn == 1)
 								continue;
 							rb_addr = sgn ? base_rb + delta : base_rb - delta;
-							if (dbg_safe_read(&rb, (void *)rb_addr, 8))
+
+							int rd = dbg_safe_read(&rb, (void *)rb_addr, 8);
+							if (rd) {
+								pr_info("[dbg]   rb@0x%lx d=%d s=%d safe_read FAIL\n",
+									rb_addr, delta, sgn);
 								continue;
-							if (rb_addr >= cand && rb_addr + 8 <= cand + len * 4)
+							}
+
+							if (rb_addr >= real_cand &&
+							    rb_addr + 8 <= real_cand + real_len * 4) {
+								pr_info("[dbg]   rb@0x%lx=0x%lx d=%d RANGE skip\n",
+									rb_addr, rb, delta);
 								continue;
-							if ((rb & ~0x1FFFFFULL) != kernel_base)
-								continue;
+							}
 
 							unsigned long check = (rb_addr + 8 + 7) & ~7ULL;
 							int ns_ok = 0;
-							unsigned int ns;
-							if (!dbg_safe_read(&ns, (void *)check, 4) &&
-							    (ns == (unsigned int)len || ns == (unsigned int)(len - 1)))
-								ns_ok = 1;
+							unsigned int ns = 0;
+							if (!dbg_safe_read(&ns, (void *)check, 4)) {
+								if (ns == (unsigned int)len || ns == (unsigned int)(len - 1))
+									ns_ok = 1;
+							}
 							if (!ns_ok) {
 								ns_ok = 1;
 								for (int i = 0; i < 5 && ns_ok; i++) {
@@ -224,39 +245,36 @@ static void dbg_discover(unsigned long ti_addr)
 								}
 							}
 							if (!ns_ok) {
-								pr_info("[dbg]   rb@0x%lx=0x%lx ns/seqs FAIL\n", rb_addr, rb);
+								pr_info("[dbg]   rb@0x%lx=0x%lx d=%d ns@0x%lx=%u len=%d ns/seqs FAIL\n",
+									rb_addr, rb, delta, check, ns, len);
 								continue;
-							}
-
-							int skip = 0;
-							for (skip = 0; skip < 20; skip++) {
-								u32 zv;
-								if (dbg_safe_read(&zv, (void *)(cand + skip * 4), 4))
-									break;
-								if (zv != 0)
-									break;
 							}
 
 							int vok = 1;
 							for (int i = 0; i < 3 && vok; i++) {
 								u32 o;
-								if (dbg_safe_read(&o, (void *)(cand + (skip + i) * 4), 4))
+								if (dbg_safe_read(&o, (void *)(real_cand + i * 4), 4))
 									break;
-								unsigned long addr = rb + o;
-								if (!((addr & ~0x1FFFFFULL) == kernel_base))
-									continue;
 								char name[64];
 								name[0] = 0;
-								sprint_symbol(name, addr);
-								if (name[0])
-									vok = 2;
+								sprint_symbol(name, rb + o);
+								if (name[0] == '0' && name[1] == 'x') {
+									sprint_symbol(name, (u64)o);
+									if (name[0] == '0' && name[1] == 'x')
+										vok = 0;
+								}
+								pr_info("[dbg]   rb@0x%lx=0x%lx d=%d samp[%d] o=0x%x '%s' %s\n",
+									rb_addr, rb, delta, i, o, name,
+									vok ? "ok" : "REJECT");
 							}
-
 							if (!vok) {
-								pr_info("[dbg]   rb@0x%lx=0x%lx sprint verify FAIL\n", rb_addr, rb);
+								pr_info("[dbg]   rb@0x%lx=0x%lx d=%d sprint FAIL\n",
+									rb_addr, rb, delta);
 								continue;
 							}
-							pr_info("[dbg]   rb@0x%lx=0x%lx VERIFIED sprint ok\n", rb_addr, rb);
+
+							pr_info("[dbg]   rb@0x%lx=0x%lx d=%d VERIFIED\n",
+								rb_addr, rb, delta);
 							rb_ok = 1;
 						}
 					}
