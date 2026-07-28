@@ -599,15 +599,6 @@ ks_dbg("  klmarks @ 0x%lx\n", klmarks_addr);
 ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 	ks_dbg("  layout  v%d\n", is_v1_layout ? 1 : 2);
 
-	if (klmarks_addr && klnum_val) {
-		unsigned int m0, m1;
-		int mok = !safe_read(&m0, (void *)klmarks_addr, 4) && m0 == 0;
-		if (mok && (klnum_val + 255) / 256 > 1)
-			mok = !safe_read(&m1, (void *)(klmarks_addr + 4), 4)
-				&& m1 >= 256;
-		ks_dbg("  markers verify: %s\n", mok ? "OK" : "MISMATCH");
-	}
-
 #ifdef KSYMLESS_CHECK
 	if (kltable_addr && klindex_addr) {
 		unsigned short off0;
