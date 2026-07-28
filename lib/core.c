@@ -886,6 +886,19 @@ static unsigned long name_to_addr_linear(const char *name)
 				if (dot)
 					*dot = '\0';
 			}
+			{
+				int sample = 0;
+				if (idx < 5)
+					sample = 1;
+				else if (idx == (int)klnum_val / 2)
+					sample = 1;
+				else if (idx >= (int)klnum_val - 5)
+					sample = 1;
+				else if (nbuf[0] == 'k' && nbuf[1] == 'a')
+					sample = 1;
+				if (sample)
+					ks_dbg("[ksymless] linear: [%d] '%s'\n", idx, nbuf);
+			}
 			if (strcmp(nbuf, name) == 0) {
 				hit = 1;
 				ks_dbg("[ksymless] linear: HIT idx=%d\n", idx);
