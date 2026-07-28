@@ -22,7 +22,7 @@ Thanks to [小初](https://www.coolapk.com/u/42372039) for providing
 the device for GKI 6.1 testing.
 
 Thanks to [haohao3001](https://github.com/haohao3001) for providing
-the device for GKI 6.12 testing.
+the device for GKI 6.12/5.15 testing.
 
 Thanks to [mx_wj](https://github.com/mx-wj) for providing
 the device for GKI 6.1 testing.
