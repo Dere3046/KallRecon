@@ -2,9 +2,11 @@
 
 discovers and reconstructs the kallsyms symbol table from kernel
 image memory on ARM64 GKI. locates kallsyms_lookup_name to provide
-symbol resolution from within an LKM. depends only on sprint_symbol.
+symbol resolution from within an LKM. inspired by
+[ksymless](https://github.com/rota1001/ksymless) and depends only on
+sprint_symbol.
 
-kallsyms internals: [xcellerator](https://xcellerator.github.io/posts/linux_rootkits_11/)
+on kallsyms: [xcellerator](https://xcellerator.github.io/posts/linux_rootkits_11/)
 
 ## requirements
 
