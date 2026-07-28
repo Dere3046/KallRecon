@@ -253,8 +253,6 @@ static int verify_offsets_rb(unsigned long cand, int len,
 				continue;
 			if (rb_addr >= cand && rb_addr + 8 <= cand + len * 4)
 				continue;
-			if ((rb & ~0x1FFFFFULL) != kernel_base)
-				continue;
 			{
 				unsigned long check = (rb_addr + 8 + 7) & ~7ULL;
 				int ok = 0;
