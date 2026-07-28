@@ -791,8 +791,124 @@ unsigned int get_sym_offset(unsigned int seq)
 	return p - (const u8 *)klnames_addr;
 }
 
+static int expand_sym_buf(unsigned short *ti, unsigned char *tt,
+			  const unsigned char *enc, char *buf, int max)
+{
+	unsigned int len = *enc++;
+	if (len & 0x80)
+		len = (len & 0x7F) | (*enc++ << 7);
+
+	int skipped = 0;
+	for (unsigned int i = 0; i < len && max > 1; i++) {
+		const char *tp = (const char *)tt + ti[*enc++];
+		while (*tp) {
+			if (skipped) {
+				if (max <= 1)
+					return 0;
+				*buf++ = *tp;
+				max--;
+			} else {
+				skipped = 1;
+			}
+			tp++;
+		}
+	}
+	if (max)
+		*buf = '\0';
+	return 1;
+}
+
+static int skip_name(const unsigned char **p)
+{
+	int lb = *(*p)++;
+	int elen = lb;
+	if (lb & 0x80) {
+		elen = (lb & 0x7F) | (*(*p)++ << 7);
+	}
+	*p += elen;
+	return 1;
+}
+
+static unsigned short ti_buf[256];
+static unsigned char tt_buf[2048];
+
+static unsigned long name_to_addr_linear(const char *name)
+{
+	unsigned short *ti = ti_buf;
+	unsigned char *tt = tt_buf;
+	char nbuf[256];
+	unsigned long len, pg, limit;
+	int idx;
+
+	len = strlen(name);
+	limit = kltable_addr > 0x1000 ? kltable_addr - 0x1000 : 0;
+
+	if (safe_read(ti, (void *)klindex_addr, sizeof(ti)))
+		return 0;
+	if (safe_read(tt, (void *)kltable_addr, sizeof(tt)))
+		return 0;
+
+	for (pg = klnames_addr & ~0xFFFFULL, idx = 0;
+	     idx < (int)klnum_val; pg += 16 * 0x1000) {
+		if (safe_read(bigbuf, (void *)pg, 16 * 0x1000))
+			break;
+
+		const unsigned char *p = (const unsigned char *)bigbuf;
+		const unsigned char *end = p + 16 * 0x1000;
+		if (pg == (klnames_addr & ~0xFFFFULL))
+			p += klnames_addr - pg;
+
+		while (p + 3 < end && idx < (int)klnum_val) {
+			const unsigned char *name_start = p;
+			int lb = *p++;
+
+			if (p >= end)
+				break;
+			int elen = lb;
+			if (lb & 0x80) {
+				if (p >= end)
+					break;
+				elen = (lb & 0x7F) | (*p++ << 7);
+			}
+
+			/* all encoded bytes must fit */
+			if (p + elen > end)
+				break;
+
+			unsigned char firstc = *p;
+			if (firstc < 256) {
+				const char *tok = (const char *)tt + ti[firstc];
+				if (tok[0] != name[0] || (len >= 2 &&
+				    tok[1] && tok[1] != name[1])) {
+					p += elen;
+					idx++;
+					continue;
+				}
+			}
+
+			expand_sym_buf(ti, tt, name_start, nbuf, sizeof(nbuf));
+			{
+				char *dot = strstr(nbuf, ".llvm.");
+				if (dot)
+					*dot = '\0';
+			}
+			if (strcmp(nbuf, name) == 0)
+				return sym_addr(idx);
+
+			p = name_start;
+			skip_name(&p);
+			idx++;
+		}
+	}
+
+	return 0;
+}
+
 unsigned long kallsyms_name_to_addr(const char *name)
 {
+	if (!klseqs_addr)
+		return name_to_addr_linear(name);
+
 	int low = 0, high = (int)klnum_val - 1;
 	char nbuf[256];
 
