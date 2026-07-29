@@ -127,8 +127,13 @@ static int verify_offsets_rb(unsigned long cand, int len,
 				sprint_symbol(name, rb + o);
 				if (name[0] == '0' && name[1] == 'x') {
 					sprint_symbol(name, (u64)o);
-					if (name[0] == '0' && name[1] == 'x')
-						vok = 0;
+					if (name[0] == '0' && name[1] == 'x') {
+						sprint_symbol(name,
+							kernel_base + o);
+						if (name[0] == '0' &&
+						    name[1] == 'x')
+							vok = 0;
+					}
 				}
 			}
 			if (!vok)
@@ -184,9 +189,10 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 		}
 
 		if (len >= 5000 && len > *best_len) {
-			unsigned long kbase_hi =
-				kernel_base & 0xFFFFFFFF00000000ULL;
-			if ((prev | kbase_hi) == kernel_base)
+			ks_dbg("[kallrecon] cand@0x%lx len=%d prev=0x%x\n",
+				cand, len, prev);
+
+			if (prev != 0 && (prev & 0x1FFFFF) == 0)
 				len--;
 
 			unsigned long rb, rb_addr;
@@ -200,6 +206,22 @@ static int scan_zerou32(unsigned long start, unsigned long end,
 				found = 1;
 				ks_dbg("[kallrecon] hit pg=0x%lx sorted=%d\n",
 					(unsigned long)(cand & ~0xFFFULL), len);
+			} else if (len > 5000 &&
+				verify_offsets_rb(cand, len - 1,
+						  &rb, &rb_addr)) {
+				len--;
+				*best_cand = cand;
+				*best_len = len;
+				kloffs_addr = cand;
+				klnum_val = len;
+				klbase_addr = rb_addr;
+				klbase_val = rb;
+				found = 1;
+				ks_dbg("[kallrecon] hit pg=0x%lx sorted=%d (len-1)\n",
+					(unsigned long)(cand & ~0xFFFULL),
+					len);
+			} else {
+				ks_dbg("[kallrecon] cand REJECT\n");
 			}
 		}
 
@@ -317,6 +339,7 @@ ks_dbg("[kallrecon] token_index not found\n");
 		return;
 	}
 ks_dbg("[kallrecon] ti=0x%lx\n", ti_addr);
+	klindex_addr = ti_addr;
 	if (!discover_kallsyms(ti_addr)) {
 ks_dbg("[kallrecon] layout: offsets not found\n");
 		return;

@@ -32,7 +32,10 @@ static void dbg_scan_range(void)
 
 	scan_start = kltable_addr > 0x400000 ?
 		(kltable_addr - 0x400000) & ~0xFFFULL : kernel_base;
-	scan_end = (klindex_addr + 0x200000 + 0xFFF) & ~0xFFFULL;
+	if (klindex_addr)
+		scan_end = (klindex_addr + 0x200000 + 0xFFF) & ~0xFFFULL;
+	else
+		scan_end = (kltable_addr + 0x200000 + 0xFFF) & ~0xFFFULL;
 
 	pr_info("[dbg] scan=0x%lx-0x%lx (%luKB)\n",
 		scan_start, scan_end, (scan_end - scan_start) / 1024);
@@ -106,11 +109,6 @@ static void dbg_sample_names(void)
 	}
 }
 
-static void dbg_sct_dummy(void)
-{
-	pr_info("[dbg] sct: not included (see lib/sct.c in history)\n");
-}
-
 void dbg_dump(void)
 {
 	pr_info("[dbg] === diagnostic dump ===\n");
@@ -119,5 +117,4 @@ void dbg_dump(void)
 	dbg_discovery();
 	dbg_sprint_verify();
 	dbg_sample_names();
-	dbg_sct_dummy();
 }
