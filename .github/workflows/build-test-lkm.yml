@@ -1,5 +1,12 @@
-name: Build Test LKM for all GKI
+name: Build Test All GKI
 on:
+  push:
+    paths:
+      - 'lib/**'
+      - 'src/**'
+      - 'test/**'
+      - 'Makefile'
+      - '.github/workflows/build-test-lkm.yml'
   workflow_dispatch:
 
 jobs:

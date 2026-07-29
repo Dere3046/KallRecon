@@ -1,5 +1,11 @@
-name: Build LKM for all GKI
+name: Build All GKI
 on:
+  push:
+    paths:
+      - 'lib/**'
+      - 'src/**'
+      - 'Makefile'
+      - '.github/workflows/build-lkm.yml'
   workflow_dispatch:
 
 jobs:
