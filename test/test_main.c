@@ -4,7 +4,6 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include "../lib/core.h"
-#include "dbg.h"
 
 MODULE_LICENSE("GPL");
 
@@ -14,8 +13,6 @@ static int __init test_probe_init(void)
 {
 	sprint_addr = (unsigned long)&sprint_symbol;
 	kernel_base = sprint_addr & ~0x1FFFFFULL;
-
-	dbg_scan();
 
 	find_kallsyms_base();
 
