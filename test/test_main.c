@@ -4,6 +4,7 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include "../lib/core.h"
+#include "dbg.h"
 
 MODULE_LICENSE("GPL");
 
@@ -15,6 +16,8 @@ static int __init test_probe_init(void)
 	kernel_base = sprint_addr & ~0x1FFFFFULL;
 
 	find_kallsyms_base();
+
+	dbg_dump();
 
 	if (!klnum_val || !kallrecon_klp) {
 		pr_info("[test] bootstrap incomplete\n");
