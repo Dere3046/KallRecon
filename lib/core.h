@@ -28,6 +28,7 @@ extern unsigned long klnum_addr;
 extern int is_v1_layout;
 
 extern unsigned long (*kallrecon_klp)(const char *name);
+extern unsigned long (*kallrecon_module_klp)(const char *name);
 
 void find_kallsyms_base(void);
 unsigned long sym_addr(int idx);

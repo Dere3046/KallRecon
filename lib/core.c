@@ -40,8 +40,26 @@ unsigned long klnum_addr;
 int is_v1_layout;
 
 unsigned long (*kallrecon_klp)(const char *name);
+unsigned long (*kallrecon_module_klp)(const char *name);
 
 static unsigned int bigbuf[16 * 1024];
+
+/* strip LTO suffix like kernel cleanup_symbol_name()
+ * 5.10/5.15 (no seqs): '$', 6.1+ (seqs): ".llvm."
+ */
+static int ks_cleanup_name(char *s)
+{
+	char *res;
+
+	if (klseqs_addr)
+		res = strstr(s, ".llvm.");
+	else
+		res = strrchr(s, '$');
+	if (!res)
+		return 0;
+	*res = '\0';
+	return 1;
+}
 
 static int check_token_index(unsigned short *ti)
 {
@@ -438,6 +456,20 @@ ks_dbg("[kallrecon] layout: offsets not found\n");
 			klnames_addr = (klnum_addr + 4 + 7) & ~7ULL;
 	}
 
+	/*
+	 * sorted-run cand may sit on a leading zero u32 before
+	 * kallsyms_offsets, shifting sym_addr() by one entry.
+	 * recompute offsets start from kallsyms_num_syms.
+	 */
+	if (klbase_addr && klnum_addr) {
+		u32 ns;
+		if (!safe_read(&ns, (void *)klnum_addr, 4) && ns) {
+			kloffs_addr =
+				(klbase_addr - (unsigned long)ns * 4) & ~7ULL;
+			klnum_val = ns;
+		}
+	}
+
 ks_dbg("[kallrecon] kallsyms data:\n");
 ks_dbg("  klbase  @ 0x%lx = 0x%lx\n", klbase_addr, klbase_val);
 ks_dbg("  kloffs  @ 0x%lx\n", kloffs_addr);
@@ -506,6 +538,11 @@ ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 		unsigned long addr = kallsyms_name_to_addr("kallsyms_lookup_name");
 		if (addr)
 			kallrecon_klp = (unsigned long (*)(const char *))addr;
+
+		unsigned long maddr = kallsyms_name_to_addr("module_kallsyms_lookup_name");
+		if (maddr)
+			kallrecon_module_klp =
+				(unsigned long (*)(const char *))maddr;
 	}
 }
 
@@ -680,11 +717,6 @@ static unsigned long name_to_addr_linear(const char *name)
 		decoded++;
 		expand_sym_buf(ti, tt, name_start, nbuf, sizeof(nbuf));
 		{
-			char *dot = strstr(nbuf, ".llvm.");
-			if (dot)
-				*dot = '\0';
-		}
-		{
 			int sample = 0;
 			if (idx < 5)
 				sample = 1;
@@ -702,6 +734,11 @@ static unsigned long name_to_addr_linear(const char *name)
 			ks_dbg("[kallrecon] linear: HIT idx=%d\n", idx);
 			return sym_addr(idx);
 		}
+		if (ks_cleanup_name(nbuf) && strcmp(nbuf, name) == 0) {
+			hit = 1;
+			ks_dbg("[kallrecon] linear: HIT(cln) idx=%d\n", idx);
+			return sym_addr(idx);
+		}
 
 		if (slide_advance(&w, hdr + elen)) {
 			ks_dbg("[kallrecon] linear: slide fail idx=%d\n", idx);
@@ -710,13 +747,19 @@ static unsigned long name_to_addr_linear(const char *name)
 	}
 
 	ks_dbg("[kallrecon] linear: done idx=%d decoded=%d hit=%d\n", idx, decoded, hit);
+	if (kallrecon_module_klp)
+		return kallrecon_module_klp(name);
 	return 0;
 }
 
 unsigned long kallsyms_name_to_addr(const char *name)
 {
-	if (!klseqs_addr)
-		return name_to_addr_linear(name);
+	if (!klseqs_addr) {
+		unsigned long addr = name_to_addr_linear(name);
+		if (addr || !kallrecon_module_klp)
+			return addr;
+		return kallrecon_module_klp(name);
+	}
 
 	int low = 0, high = (int)klnum_val - 1;
 	char nbuf[256];
@@ -726,20 +769,31 @@ unsigned long kallsyms_name_to_addr(const char *name)
 		unsigned int seq = get_sym_seq(mid);
 		unsigned int off = get_sym_offset(seq);
 		expand_sym(off, nbuf, sizeof(nbuf));
-		{
-			char *dot = strstr(nbuf, ".llvm.");
-			if (dot)
-				*dot = '\0';
-		}
-		/* LTO aliases with same cleaned name resolve to smaller address */
+		ks_cleanup_name(nbuf);
+
 		int r = strcmp(name, nbuf);
 		if (r > 0)
 			low = mid + 1;
 		else if (r < 0)
 			high = mid - 1;
-		else
-			return sym_addr(seq);
+		else {
+			/* walk left to first matching entry, same cleaned
+			 * name resolves to smallest address */
+			unsigned int first = mid;
+			while (first > 0) {
+				unsigned int pseq = get_sym_seq(first - 1);
+				unsigned int poff = get_sym_offset(pseq);
+				expand_sym(poff, nbuf, sizeof(nbuf));
+				ks_cleanup_name(nbuf);
+				if (strcmp(name, nbuf))
+					break;
+				first--;
+			}
+			return sym_addr(get_sym_seq(first));
+		}
 	}
+	if (kallrecon_module_klp)
+		return kallrecon_module_klp(name);
 	return 0;
 }
 
