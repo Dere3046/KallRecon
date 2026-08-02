@@ -33,6 +33,7 @@ extern unsigned long (*kallrecon_module_klp)(const char *name); /* experimental,
 #endif
 
 void find_kallsyms_base(void);
+void kallrecon_set_cleanup(int (*cb)(char *s)); /* NULL detaches user cleanup hook */
 unsigned long sym_addr(int idx);
 int expand_sym(unsigned int off, char *buf, int max);
 unsigned int get_sym_seq(int idx);

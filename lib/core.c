@@ -62,6 +62,21 @@ static int ks_cleanup_name(char *s)
 	return 1;
 }
 
+static int (*kallrecon_user_cleanup)(char *s);
+
+static int ks_cleanup_name_chain(char *s)
+{
+	int r = ks_cleanup_name(s);
+	if (kallrecon_user_cleanup)
+		r |= kallrecon_user_cleanup(s) ? 1 : 0;
+	return r;
+}
+
+void kallrecon_set_cleanup(int (*cb)(char *s))
+{
+	kallrecon_user_cleanup = cb;
+}
+
 static int check_token_index(unsigned short *ti)
 {
 	if (ti[0] != 0)
@@ -737,7 +752,7 @@ static unsigned long name_to_addr_linear(const char *name)
 			ks_dbg("[kallrecon] linear: HIT idx=%d\n", idx);
 			return sym_addr(idx);
 		}
-		if (ks_cleanup_name(nbuf) && strcmp(nbuf, name) == 0) {
+		if (ks_cleanup_name_chain(nbuf) && strcmp(nbuf, name) == 0) {
 			hit = 1;
 			ks_dbg("[kallrecon] linear: HIT(cln) idx=%d\n", idx);
 			return sym_addr(idx);
@@ -778,7 +793,7 @@ unsigned long kallsyms_name_to_addr(const char *name)
 		unsigned int seq = get_sym_seq(mid);
 		unsigned int off = get_sym_offset(seq);
 		expand_sym(off, nbuf, sizeof(nbuf));
-		ks_cleanup_name(nbuf);
+		ks_cleanup_name_chain(nbuf);
 
 		int r = strcmp(name, nbuf);
 		if (r > 0)
@@ -793,7 +808,7 @@ unsigned long kallsyms_name_to_addr(const char *name)
 				unsigned int pseq = get_sym_seq(first - 1);
 				unsigned int poff = get_sym_offset(pseq);
 				expand_sym(poff, nbuf, sizeof(nbuf));
-				ks_cleanup_name(nbuf);
+				ks_cleanup_name_chain(nbuf);
 				if (strcmp(name, nbuf))
 					break;
 				first--;
@@ -822,5 +837,6 @@ int sym_name_at(unsigned long addr, char *buf, int max)
 
 	unsigned int off = get_sym_offset(low);
 	expand_sym(off, buf, max);
+	ks_cleanup_name_chain(buf);
 	return low;
 }
