@@ -12,6 +12,10 @@ ifeq ($(CHECK),1)
 ccflags-y += -DKALLRECON_CHECK
 endif
 
+ifdef KALLRECON_MODULE_LOOKUP
+ccflags-y += -DKALLRECON_MODULE_LOOKUP
+endif
+
 ccflags-y += -std=gnu11
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-variable

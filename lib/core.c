@@ -39,6 +39,9 @@ unsigned long klnum_addr;
 
 int is_v1_layout;
 unsigned long (*kallrecon_klp)(const char *name);
+#ifdef KALLRECON_MODULE_LOOKUP
+unsigned long (*kallrecon_module_klp)(const char *name); /* experimental, may be unstable */
+#endif
 
 static unsigned int bigbuf[16 * 1024];
 
@@ -536,6 +539,13 @@ ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 		unsigned long addr = kallsyms_name_to_addr("kallsyms_lookup_name");
 		if (addr)
 			kallrecon_klp = (unsigned long (*)(const char *))addr;
+
+#ifdef KALLRECON_MODULE_LOOKUP
+		unsigned long maddr = kallsyms_name_to_addr("module_kallsyms_lookup_name");
+		if (maddr)
+			kallrecon_module_klp =
+				(unsigned long (*)(const char *))maddr;
+#endif
 	}
 }
 
@@ -740,13 +750,25 @@ static unsigned long name_to_addr_linear(const char *name)
 	}
 
 	ks_dbg("[kallrecon] linear: done idx=%d decoded=%d hit=%d\n", idx, decoded, hit);
+#ifdef KALLRECON_MODULE_LOOKUP
+	if (kallrecon_module_klp)
+		return kallrecon_module_klp(name);
+#endif
 	return 0;
 }
 
 unsigned long kallsyms_name_to_addr(const char *name)
 {
-	if (!klseqs_addr)
+	if (!klseqs_addr) {
+#ifdef KALLRECON_MODULE_LOOKUP
+		unsigned long addr = name_to_addr_linear(name);
+		if (addr || !kallrecon_module_klp)
+			return addr;
+		return kallrecon_module_klp(name);
+#else
 		return name_to_addr_linear(name);
+#endif
+	}
 
 	int low = 0, high = (int)klnum_val - 1;
 	char nbuf[256];
@@ -779,6 +801,10 @@ unsigned long kallsyms_name_to_addr(const char *name)
 			return sym_addr(get_sym_seq(first));
 		}
 	}
+#ifdef KALLRECON_MODULE_LOOKUP
+	if (kallrecon_module_klp)
+		return kallrecon_module_klp(name);
+#endif
 	return 0;
 }
 
