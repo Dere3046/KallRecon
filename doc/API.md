@@ -25,6 +25,12 @@ if it fails all globals stay at zero. no partial state.
 
 `sprint_addr` — runtime address of `sprint_symbol`, the discovery anchor
 
+low level table addresses, ready after discovery:
+
+`klbase_addr`, `kloffs_addr`, `klindex_addr`, `klseqs_addr`, `klmarks_addr`,
+`kltable_addr`, `klnames_addr`, `klnum_addr` — raw kernel addresses of each
+kallsyms sub-table. `klseqs_addr` nonzero means the seqs layout (6.1+).
+
 ## Lookup
 
 **`unsigned long (*kallrecon_klp)(const char *name)`**
@@ -42,6 +48,10 @@ our own name to address lookup. on kernels that have the seqs table
 falls back to a buffered linear scan of the names table. same calling
 convention as `kallrecon_klp`. zero return means the name was not found.
 
+when built with `KALLRECON_MODULE_LOOKUP`, a failed table lookup falls
+back to an indirect call of the kernel's `module_kallsyms_lookup_name`,
+same as `kallrecon_klp`. experimental, off by default, may be unstable.
+
 **`unsigned long sym_addr(int idx)`**
 
 get the address of the symbol at sorted index `idx`. the index must be in
@@ -53,4 +63,62 @@ address to name reverse lookup. binary searches the sorted addresses
 table, decodes the compressed name and writes it into `buf`. at most
 `max` bytes are written. returns the sorted index.
 
+**`unsigned int get_sym_seq(int idx)`**, **`unsigned int get_sym_offset(unsigned int seq)`**
 
+raw access to the per-symbol sequence number and its offset. only valid
+on the seqs layout (`klseqs_addr` nonzero).
+
+**`int expand_sym(unsigned int off, char *buf, int max)`**
+
+decode one compressed symbol from token_table at offset `off` into `buf`.
+used for manual scanning over the names table.
+
+## Name cleanup
+
+kallsyms names carry LTO suffixes. the core strips them before comparing:
+`foo$hash` on 5.10/5.15, `foo.llvm.hash` on 6.1+. this default runs on
+every lookup path and on `sym_name_at` output.
+
+**`void kallrecon_set_cleanup(int (*cb)(char *s))`**
+
+attach an extra cleanup hook. the default cleanup always runs first, then
+your hook runs on the same buffer if registered. pass `NULL` to detach and
+go back to the pure default chain. return nonzero from the hook when the
+name was truncated.
+
+your hook must truncate the buffer in place. the query name you pass to
+lookup functions must already be clean, matching the kernel
+`kallsyms_lookup_name` convention.
+
+## Raw memory access
+
+**`int safe_read(void *dst, const void *src, size_t sz)`**
+
+fault-safe memory read used internally by discovery. returns nonzero on
+failure, zero on success. exported for callers that need to poke kernel
+memory the same way.
+
+## Slide window
+
+`lib/slide.h` provides a chunked paging helper for scanning large kernel
+ranges without pinning them.
+
+**`struct slide_win`** — `addr` current kernel position, `chunksz` page
+size (64KB default), `margin` overlap (512B), `off` offset inside chunk
+
+**`int slide_init(struct slide_win *w, unsigned long pos,
+unsigned int chunksz, unsigned int margin)`**
+
+**`int slide_advance(struct slide_win *w, unsigned int n)`**
+
+**`void *slide_ptr(const struct slide_win *w, const void *buf)`**,
+**`unsigned long slide_addr(const struct slide_win *w)`**
+
+## Build options
+
+`TARGET=test` — build the test probe with `KALLRECON_DEBUG` logging
+
+`CHECK=1` — extra sanity checks in discovery
+
+`KALLRECON_MODULE_LOOKUP=1` — enable the experimental
+`module_kallsyms_lookup_name` fallback
