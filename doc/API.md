@@ -29,7 +29,8 @@ low level table addresses, ready after discovery:
 
 `klbase_addr`, `kloffs_addr`, `klindex_addr`, `klseqs_addr`, `klmarks_addr`,
 `kltable_addr`, `klnames_addr`, `klnum_addr` — raw kernel addresses of each
-kallsyms sub-table. `klseqs_addr` nonzero means the seqs layout (6.1+).
+kallsyms sub-table. `klseqs_addr` nonzero means the seqs layout
+(introduced in 6.1.42; all GKI 6.1 builds have it).
 
 ## Lookup
 
@@ -44,8 +45,9 @@ ready after `find_kallsyms_base` succeeds.
 **`unsigned long kallsyms_name_to_addr(const char *name)`**
 
 our own name to address lookup. on kernels that have the seqs table
-(6.1+) it uses binary search. on kernels without seqs (5.10/5.15) it
-falls back to a buffered linear scan of the names table. same calling
+(6.1.42+, all GKI 6.1 builds) it uses binary search. on kernels without
+seqs (5.10/5.15, 6.1.0~6.1.41) it falls back to a buffered linear scan
+of the names table. same calling
 convention as `kallrecon_klp`. zero return means the name was not found.
 
 when built with `KALLRECON_MODULE_LOOKUP`, a failed table lookup falls
