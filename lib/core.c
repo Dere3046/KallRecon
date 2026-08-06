@@ -24,6 +24,8 @@ int safe_read(void *dst, const void *src, size_t sz)
 	return copy_from_kernel_nofault(dst, src, sz);
 }
 
+unsigned long kr_get_sprint_addr(void);
+
 unsigned long sprint_addr;
 unsigned long kernel_base;
 unsigned long klbase_addr;
@@ -360,7 +362,7 @@ static unsigned long detect_seqs(unsigned long cand, unsigned int n)
 
 void find_kallsyms_base(void)
 {
-	sprint_addr = (unsigned long)&sprint_symbol;
+	sprint_addr = kr_get_sprint_addr();
 	kernel_base = sprint_addr & ~0x1FFFFFULL;
 	klbase_val = kernel_base;
 

@@ -12,6 +12,8 @@
 
 int safe_read(void *dst, const void *src, size_t sz);
 
+unsigned long kr_get_sprint_addr(void);
+
 extern unsigned long sprint_addr;
 extern unsigned long kernel_base;
 extern unsigned long klbase_addr;

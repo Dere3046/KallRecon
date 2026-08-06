@@ -1,5 +1,5 @@
-kallrecon-objs := src/main.o lib/core.o lib/slide.o src/verify.o
-test_probe-objs := test/test_main.o test/dbg.o lib/core.o lib/slide.o
+kallrecon-objs := src/main.o lib/core.o lib/slide.o lib/anchor.o src/verify.o
+test_probe-objs := test/test_main.o test/dbg.o lib/core.o lib/slide.o lib/anchor.o
 
  ifeq ($(TARGET),test)
  obj-m := test_probe.o
