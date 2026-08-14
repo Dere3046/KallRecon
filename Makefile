@@ -34,3 +34,7 @@ all:
 	make -C $(KDIR) M=$(ODIR) src=$(MDIR) modules
 clean:
 	make -C $(KDIR) M=$(ODIR) src=$(MDIR) clean
+
+$(obj)/%.o: $(src)/%.c $(recordmcount_source) FORCE
+	$(call if_changed_rule,cc_o_c)
+	$(call cmd,force_checksrc)
