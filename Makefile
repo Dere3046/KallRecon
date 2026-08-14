@@ -22,13 +22,15 @@ ccflags-y += -Wno-unused-variable
 ccflags-y += -Wno-unused-function
 ccflags-y += -Wno-strict-prototypes
 
-ifeq ($(KDIR),)
-$(error KDIR must be set, e.g. "make KDIR=/path/to/kernel-source")
-endif
-PWD := $(shell pwd)
+KDIR := $(KDIR)
+MDIR := $(realpath $(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+ODIR := $(MDIR)/out/$(VER)
+
+$(info -- KDIR: $(KDIR))
+$(info -- MDIR: $(MDIR))
+$(info -- ODIR: $(ODIR))
 
 all:
-	make -C $(KDIR) M=$(PWD) modules
-
+	make -C $(KDIR) M=$(ODIR) src=$(MDIR) modules
 clean:
-	make -C $(KDIR) M=$(PWD) clean
+	make -C $(KDIR) M=$(ODIR) src=$(MDIR) clean
