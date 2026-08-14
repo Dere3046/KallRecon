@@ -38,3 +38,6 @@ clean:
 $(obj)/%.o: $(src)/%.c $(recordmcount_source) FORCE
 	$(call if_changed_rule,cc_o_c)
 	$(call cmd,force_checksrc)
+
+$(obj)/%.o: $(src)/%.S FORCE
+	$(call if_changed_rule,as_o_S)
