@@ -12,7 +12,9 @@ the one call that starts everything. scans kernel memory upwards from
 relative base, markers, names, num_syms, and optionally seqs. on success
 `klnum_val` is nonzero and `kallrecon_klp` is ready.
 
-if it fails all globals stay at zero. no partial state.
+if it fails `klnum_val` stays zero and `kallrecon_klp` is not set;
+`sprint_addr`/`kernel_base`/`klbase_val` are populated regardless
+(useful for failure diagnosis).
 
 ### key globals
 
@@ -68,7 +70,8 @@ table, decodes the compressed name and writes it into `buf`. at most
 **`unsigned int get_sym_seq(int idx)`**, **`unsigned int get_sym_offset(unsigned int seq)`**
 
 raw access to the per-symbol sequence number and its offset. only valid
-on the seqs layout (`klseqs_addr` nonzero).
+on the seqs layout (`klseqs_addr` nonzero). `get_sym_offset` returns
+`UINT_MAX` on a decode failure, never a valid offset.
 
 **`int expand_sym(unsigned int off, char *buf, int max)`**
 

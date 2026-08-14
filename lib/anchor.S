@@ -18,7 +18,9 @@ kr_sprint_addr_ref:
 
 .text
 .global kr_get_sprint_addr
+.type kr_get_sprint_addr, %function
 kr_get_sprint_addr:
 	adrp x0, kr_sprint_addr_ref
 	ldr x0, [x0, :lo12:kr_sprint_addr_ref]
 	ret
+.size kr_get_sprint_addr, .-kr_get_sprint_addr

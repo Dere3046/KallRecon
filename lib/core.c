@@ -45,8 +45,6 @@ unsigned long (*kallrecon_klp)(const char *name);
 unsigned long (*kallrecon_module_klp)(const char *name); /* experimental, may be unstable */
 #endif
 
-static unsigned int bigbuf[16 * 1024];
-
 /* strip LTO suffix like kernel cleanup_symbol_name()
  * 5.10/5.15 (no seqs): '$', 6.1+ (seqs): ".llvm."
  */
@@ -78,17 +76,6 @@ void kallrecon_set_cleanup(int (*cb)(char *s))
 {
 	kallrecon_user_cleanup = cb;
 }
-
-static int check_token_index(unsigned short *ti)
-{
-	if (ti[0] != 0)
-		return 0;
-	for (int i = 1; i < 256; i++)
-		if (ti[i] <= ti[i - 1])
-			return 0;
-	return 1;
-}
-
 
 static int check_ti_strong(unsigned short *ti)
 {
@@ -157,8 +144,10 @@ static int verify_offsets_rb(unsigned long cand, int len,
 			int vok = 1;
 			for (int i = 0; i < 3 && vok; i++) {
 				u32 o;
-				if (safe_read(&o, (void *)(real_cand + i * 4), 4))
+				if (safe_read(&o, (void *)(real_cand + i * 4), 4)) {
+					vok = 0;
 					break;
+				}
 				char name[KSYM_SYMBOL_LEN];
 				sprint_symbol(name, rb + o);
 				if (name[0] == '0' && name[1] == 'x') {
@@ -578,6 +567,7 @@ int expand_sym(unsigned int off, char *buf, int max)
 {
 	unsigned char lb;
 	unsigned int len;
+	*buf = '\0';
 	if (safe_read(&lb, (const void *)(klnames_addr + off), 1))
 		return 0;
 	len = lb;
@@ -645,11 +635,11 @@ unsigned int get_sym_offset(unsigned int seq)
 	unsigned char lb;
 	for (unsigned int i = 0; i < seq; i++) {
 		if (safe_read(&lb, (void *)p, 1))
-			return 0;
+			return UINT_MAX;
 		int len = lb;
 		if (len & 0x80) {
 			if (safe_read(&lb, (void *)(p + 1), 1))
-				return 0;
+				return UINT_MAX;
 			len = ((len & 0x7F) | (lb << 7)) + 1;
 		}
 		p = p + len + 1;
@@ -664,6 +654,7 @@ static int expand_sym_buf(unsigned short *ti, unsigned char *tt,
 			  const unsigned char *enc, char *buf, int max)
 {
 	unsigned int len = *enc++;
+	*buf = '\0';
 	if (len & 0x80)
 		len = (len & 0x7F) | (*enc++ << 7);
 	if (len > 256U)
