@@ -31,4 +31,4 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: kallrecon-${{ matrix.kmi }}
-          path: kallrecon.ko
+          path: out/kallrecon.ko
