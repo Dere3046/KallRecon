@@ -33,6 +33,8 @@ the device for GKI 6.1 testing.
 Thanks to [pubglite55](https://github.com/pubglite55) for providing
 the device for GKI 5.15 testing.
 
+Thanks to [aaa终末地管理员](https://github.com/zmdAdministrators) for providing
+the device for GKI 6.6 testing.
 ## license
 
 GPL-2.0
