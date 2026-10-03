@@ -38,6 +38,54 @@ low level table addresses, ready after discovery:
 kallsyms sub-table. `klseqs_addr` nonzero means the seqs layout
 (introduced in 6.1.42; all GKI 6.1 builds have it).
 
+## Layout hint
+
+for kernels whose `.rodata` layout deviates from the GKI build contract
+(the offsets table sits outside the default scan window) discovery can
+be seeded with known addresses. every hint field is a runtime address:
+a value obtained offline (`vmlinux-to-elf` on the boot image) has to be
+slid to the current boot by the caller, a value read at runtime (for
+example `/proc/kallsyms` or a previous `kallrecon_layout_get`) can be
+passed as is.
+
+**`int kallrecon_supply(const struct kallrecon_hint *hint)`**
+
+optional, call before `find_kallsyms_base`. a zero field means auto
+discover that one, a filled field skips its search step. provided
+values still go through the same checks as the scan path, a mismatch
+fails discovery with `KALLRECON_HINT_INVALID` and is never trusted.
+
+`struct kallrecon_hint` fields: `offsets`, `relative_base`,
+`num_syms`, `names`, `markers`, `seqs`, `token_table`, `token_index`
+(table addresses), `scan_back`, `scan_fwd` (auto scan window in bytes,
+zero means the default 4MiB / 2MiB, a consumer that enlarges the window
+pays the extra scan time) and `timeout_ms` (discovery cap, zero means
+no cap).
+
+`offsets` alone is enough for the common shifted table case, the rest
+is derived and verified as usual.
+
+**`void kallrecon_layout_get(struct kallrecon_layout *out)`**
+
+filled with the runtime addresses and values of the final layout
+(`layout`, `kernel_base`, the table addresses, `relative_base_val`,
+`num_syms_val`) after `find_kallsyms_base`, all zero before.
+
+**`enum kallrecon_fail kallrecon_fail_reason(void)`**
+
+one of `KALLRECON_OK`, `KALLRECON_NO_ANCHOR`,
+`KALLRECON_NO_TOKEN_INDEX`, `KALLRECON_NO_OFFSETS`,
+`KALLRECON_NO_LAYOUT`, `KALLRECON_HINT_INVALID` or
+`KALLRECON_TIMEOUT` after a discovery attempt.
+
+after a failed `find_kallsyms_base` the attempt state is reset and the
+call can be repeated with a changed hint: whether to retry with a
+larger scan window (or with explicit addresses) is the caller's
+decision, the library never enlarges the window by itself.
+
+consumers that never call `kallrecon_supply` are not affected, the
+default discovery path is unchanged.
+
 ## Lookup
 
 **`unsigned long (*kallrecon_klp)(const char *name)`**
@@ -89,16 +137,30 @@ string.
 
 ## Name cleanup
 
-kallsyms names carry LTO suffixes. the core strips them before comparing:
-`foo$hash` on 5.10/5.15, `foo.llvm.hash` on 6.1+. this default runs on
-every lookup path and on `sym_name_at` output.
+kallsyms names carry LTO suffixes. the built in cleanup strips one of
+them before comparing, so the query name you pass to lookup functions
+can stay clean.
+
+- `KALLRECON_CLEANUP_SEQS` (default) — the original rule: `.llvm.` when
+  the seqs table is present, the last `$` otherwise. GKI verified,
+  deterministic, no probe cost
+- `KALLRECON_CLEANUP_LLVM` — always strip at `.llvm.`
+- `KALLRECON_CLEANUP_DOLLAR` — always strip at the last `$`
+- `KALLRECON_CLEANUP_AUTO` — probes the names stream once (up to 8192
+  entries) for `.llvm.` or `$`, exactly one found is used, both or
+  neither falls back to the `SEQS` rule. opt-in setting recommended for
+  custom kernels with a different suffix style or a vendor seqs variant
+
+**`void kallrecon_set_cleanup_mode(enum kallrecon_cleanup mode)`**
+
+select the cleanup style, call before lookups. `SEQS` is the default.
 
 **`void kallrecon_set_cleanup(int (*cb)(char *s))`**
 
-attach an extra cleanup hook. the default cleanup always runs first, then
-your hook runs on the same buffer if registered. pass `NULL` to detach and
-go back to the pure default chain. return nonzero from the hook when the
-name was truncated.
+attach an extra cleanup hook. the selected built in cleanup always runs
+first, then your hook runs on the same buffer if registered. pass `NULL`
+to detach and go back to the pure built in chain. return nonzero from
+the hook when the name was truncated.
 
 your hook must truncate the buffer in place. the query name you pass to
 lookup functions must already be clean, matching the kernel

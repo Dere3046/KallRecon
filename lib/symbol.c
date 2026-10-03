@@ -33,6 +33,11 @@ static int kl_markers_ok;
 #define ks_markers_usable()	(kl_markers_ok == 1)
 #endif
 
+void kr_markers_reset(void)
+{
+	kl_markers_ok = 0;
+}
+
 void kr_verify_markers(void)
 {
 	u32 m0, m1;
@@ -71,14 +76,87 @@ void kr_verify_markers(void)
 		kl_markers_ok == 1 ? "OK" : "MISMATCH");
 }
 
-/* strip LTO suffix like kernel cleanup_symbol_name()
- * 5.10/5.15 (no seqs): '$', 6.1+ (seqs): ".llvm."
- */
+#define KS_CLEANUP_PROBE	8192
+
+static unsigned short ti_buf[256];
+static unsigned char tt_buf[KS_TT_SIZE];
+
+static int ks_expand_raw(const unsigned char *enc, const unsigned short *ti,
+			 const unsigned char *tt, char *buf, int max);
+
+/* strip one LTO suffix. SEQS (default) is the original GKI proven rule
+ * and costs nothing; AUTO probes the names stream once and is the
+ * opt-in setting for third party kernels; LLVM and DOLLAR force one
+ * style */
+static int kr_cleanup_mode = KALLRECON_CLEANUP_SEQS;
+static int kr_cleanup_style;
+
+static int kr_cleanup_probe(void)
+{
+	char buf[256];
+	unsigned long off = 0;
+	int has_llvm = 0, has_dollar = 0;
+
+	if (!klnames_addr || !klindex_addr || !kltable_addr)
+		return klseqs_addr ? 1 : 2;
+	if (safe_read(ti_buf, (void *)klindex_addr, sizeof(ti_buf)) ||
+	    safe_read(tt_buf, (void *)kltable_addr, sizeof(tt_buf)))
+		return klseqs_addr ? 1 : 2;
+
+	for (int i = 0; i < KS_CLEANUP_PROBE; i++) {
+		unsigned char enc[258];
+		unsigned int len, hdr = 1;
+
+		if (safe_read(enc, (void *)(klnames_addr + off), 1))
+			break;
+		len = enc[0];
+		if (len & 0x80) {
+			if (safe_read(enc + 1,
+				      (void *)(klnames_addr + off + 1), 1))
+				break;
+			len = (len & 0x7F) | (enc[1] << 7);
+			hdr = 2;
+		}
+		if (len > 256U ||
+		    safe_read(enc + hdr,
+			      (void *)(klnames_addr + off + hdr), len))
+			break;
+		if (!ks_expand_raw(enc, ti_buf, tt_buf, buf, sizeof(buf)))
+			break;
+		if (strstr(buf, ".llvm."))
+			has_llvm = 1;
+		else if (strchr(buf, '$'))
+			has_dollar = 1;
+		if (has_llvm && has_dollar)
+			break;
+		off += hdr + len;
+	}
+
+	if (has_llvm && !has_dollar)
+		return 1;
+	if (has_dollar && !has_llvm)
+		return 2;
+	return klseqs_addr ? 1 : 2;
+}
+
+static int kr_cleanup_get_style(void)
+{
+	if (kr_cleanup_mode == KALLRECON_CLEANUP_SEQS)
+		return klseqs_addr ? 1 : 2;
+	if (kr_cleanup_mode == KALLRECON_CLEANUP_LLVM)
+		return 1;
+	if (kr_cleanup_mode == KALLRECON_CLEANUP_DOLLAR)
+		return 2;
+	if (!kr_cleanup_style)
+		kr_cleanup_style = kr_cleanup_probe();
+	return kr_cleanup_style;
+}
+
 static int ks_cleanup_name(char *s)
 {
 	char *res;
 
-	if (klseqs_addr)
+	if (kr_cleanup_get_style() == 1)
 		res = strstr(s, ".llvm.");
 	else
 		res = strrchr(s, '$');
@@ -86,6 +164,22 @@ static int ks_cleanup_name(char *s)
 		return 0;
 	*res = '\0';
 	return 1;
+}
+
+void kallrecon_set_cleanup_mode(enum kallrecon_cleanup mode)
+{
+	if (mode != KALLRECON_CLEANUP_AUTO &&
+	    mode != KALLRECON_CLEANUP_SEQS &&
+	    mode != KALLRECON_CLEANUP_LLVM &&
+	    mode != KALLRECON_CLEANUP_DOLLAR)
+		return;
+	kr_cleanup_mode = (int)mode;
+	kr_cleanup_style = 0;
+}
+
+void kr_cleanup_reset(void)
+{
+	kr_cleanup_style = 0;
 }
 
 static int (*kallrecon_user_cleanup)(char *s);
@@ -232,13 +326,24 @@ unsigned int get_sym_seq(int idx)
 	unsigned int i, seq = 0;
 
 	if (klseqs_addr) {
-		unsigned char buf[3];
+		if (klseqs_stride == 4) {
+			u32 v;
 
-		if (safe_read(buf, (const void *)(klseqs_addr + idx * 3), 3))
-			return (unsigned int)idx;
-		for (i = 0; i < 3; i++)
-			seq = (seq << 8) | buf[i];
-		return seq;
+			if (safe_read(&v, (const void *)(klseqs_addr +
+					(unsigned long)idx * 4), 4))
+				return (unsigned int)idx;
+			return v;
+		}
+		{
+			unsigned char buf[3];
+
+			if (safe_read(buf, (const void *)(klseqs_addr +
+					(unsigned long)idx * 3), 3))
+				return (unsigned int)idx;
+			for (i = 0; i < 3; i++)
+				seq = (seq << 8) | buf[i];
+			return seq;
+		}
 	}
 	return (unsigned int)idx;
 }
@@ -276,9 +381,6 @@ unsigned int get_sym_offset(unsigned int seq)
 	}
 	return p - (const u8 *)klnames_addr;
 }
-
-static unsigned short ti_buf[256];
-static unsigned char tt_buf[KS_TT_SIZE];
 
 static DEFINE_MUTEX(ks_linear_lock);
 

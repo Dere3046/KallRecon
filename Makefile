@@ -2,8 +2,8 @@
 # inside anchor.S
 ANCHOR := lib/anchor.o
 
-kallrecon-objs := src/main.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o $(ANCHOR) src/verify.o
-test_probe-objs := test/test_main.o test/dbg.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o $(ANCHOR)
+kallrecon-objs := src/main.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o lib/hint.o $(ANCHOR) src/verify.o
+test_probe-objs := test/test_main.o test/dbg.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o lib/hint.o $(ANCHOR)
 
 ifeq ($(TARGET),test)
 obj-m := test_probe.o

@@ -101,7 +101,7 @@ void verify_kallsyms(void)
 		return;
 	}
 
-	if (!klnum_val || !kloffs_addr || !klbase_addr ||
+	if (!klnum_val || !kloffs_addr ||
 	    !klnames_addr || !kltable_addr || !klindex_addr) {
 		pr_info("[kallrecon] verify: kallsyms data incomplete\n");
 		return;
@@ -139,14 +139,18 @@ void verify_kallsyms(void)
 
 void dump_kallsyms_layout(void)
 {
-	if (!klbase_addr || !kloffs_addr) {
+	unsigned int num;
+
+	if (!kloffs_addr || !klnum_val) {
 		pr_info("[kallrecon] layout: insufficient data\n");
 		return;
 	}
 
-	unsigned long diff = klbase_addr - kloffs_addr;
-	unsigned int num = (unsigned int)(diff / 4);
-	unsigned int m_cnt = (num + 255) / 256;
+	if (klbase_addr > kloffs_addr)
+		num = (unsigned int)((klbase_addr - kloffs_addr) / 4);
+	else
+		num = klnum_val;
 
-	pr_info("[kallrecon] layout: %u symbols, %u markers\n", num, m_cnt);
+	pr_info("[kallrecon] layout: %u symbols, %u markers\n",
+		num, (num + 255) / 256);
 }

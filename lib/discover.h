@@ -9,5 +9,6 @@
 #define DISCOVER_H
 
 int kr_discover_layout(void);
+void kr_discover_reset(void);
 
 #endif

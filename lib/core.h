@@ -21,6 +21,7 @@ extern unsigned long klbase_val;
 extern unsigned long kloffs_addr;
 extern unsigned long klindex_addr;
 extern unsigned long klseqs_addr;
+extern int klseqs_stride;	/* seqs entry width, 3 or 4 bytes */
 extern unsigned int  klnum_val;
 extern unsigned long klmarks_addr;
 extern unsigned long kltable_addr;
@@ -42,7 +43,16 @@ extern unsigned long (*kallrecon_module_klp)(const char *name); /* experimental,
 #endif
 
 void find_kallsyms_base(void);
+
+enum kallrecon_cleanup {
+	KALLRECON_CLEANUP_AUTO = 0,
+	KALLRECON_CLEANUP_SEQS,
+	KALLRECON_CLEANUP_LLVM,
+	KALLRECON_CLEANUP_DOLLAR,
+};
+
 void kallrecon_set_cleanup(int (*cb)(char *s)); /* NULL detaches user cleanup hook */
+void kallrecon_set_cleanup_mode(enum kallrecon_cleanup mode);
 unsigned long sym_addr(int idx);
 int expand_sym(unsigned int off, char *buf, int max);
 unsigned int get_sym_seq(int idx);

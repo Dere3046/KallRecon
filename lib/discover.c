@@ -13,6 +13,7 @@
 #include "slide.h"
 #include "symbol.h"
 #include "discover.h"
+#include "hint.h"
 
 #define KS_RUN_MIN	5000		/* min offsets run length */
 #define KS_RUN_MAX	500000		/* run scan cap */
@@ -310,6 +311,7 @@ static int scan_both(unsigned long start, unsigned long end,
 	int found = 0;
 	struct scan_run r2 = {0}, r3 = {0};
 	struct slide_win w;
+	unsigned int n = 0;
 
 	if (slide_init(&w, start, KS_WIN_SIZE, KS_WIN_MARGIN))
 		return 0;
@@ -377,6 +379,8 @@ static int scan_both(unsigned long start, unsigned long end,
 			r3.prev_addr = addr;
 		}
 
+		if (((++n) & 0x3FF) == 0 && kr_timeout_hit())
+			break;
 		if (slide_advance(&w, 4))
 			break;
 	}
@@ -439,6 +443,8 @@ static int scan_zerou32_rev(unsigned long start, unsigned long end,
 
 		if (!n)
 			break;
+		if (kr_timeout_hit())
+			return 0;
 		if (safe_read(slide_buf, (void *)lo, n * 4)) {
 			/* unreadable block: the run cannot continue across
 			 * it, commit what was collected and skip the block */
@@ -517,6 +523,7 @@ static unsigned long find_v3_num(unsigned long below, unsigned int n)
 	unsigned long start = below > KS_NUM_SEARCH ?
 		below - KS_NUM_SEARCH : kernel_base;
 	struct slide_win w;
+	unsigned int m = 0;
 
 	if (slide_init(&w, start, KS_WIN_SIZE, KS_WIN_MARGIN))
 		return 0;
@@ -533,28 +540,139 @@ static unsigned long find_v3_num(unsigned long below, unsigned int n)
 		 * so the real count sits at or just below n */
 		if (v <= n && v >= n - 16 && names_stream_ok(addr + 4))
 			return addr;
+		if (((++m) & 0x3FF) == 0 && kr_timeout_hit())
+			return 0;
 		if (slide_advance(&w, 4))
 			break;
 	}
 	return 0;
 }
 
+/* count the offsets run forward from a hinted start: zero anchored
+ * ascending (v1/v2) or negative self relative (v3). tail words that
+ * ascend with the run may be counted in, the caller verifies every
+ * candidate length anyway */
+static int hint_run_len(unsigned long cand)
+{
+	struct slide_win w;
+	unsigned int m = 0;
+	int n = 0, prev = 0, selfrel = 0, first = 1;
+
+	if (slide_init(&w, cand, KS_WIN_SIZE, KS_WIN_MARGIN))
+		return 0;
+
+	for (;;) {
+		u32 v;
+
+		if (n >= KS_RUN_MAX)
+			break;
+		v = *(u32 *)slide_ptr(&w, slide_buf);
+		if (first) {
+			selfrel = (s32)v < 0;
+			if (!selfrel && v != 0)
+				return 0;
+			first = 0;
+		} else if (selfrel) {
+			if ((s32)v < prev - 4)
+				break;
+		} else if ((int)v < prev) {
+			break;
+		}
+		prev = (int)v;
+		n++;
+		if (((++m) & 0x3FF) == 0 && kr_timeout_hit())
+			return 0;
+		if (slide_advance(&w, 4))
+			break;
+	}
+	return n;
+}
+
+/* hinted offsets still need an authoritative length: try the num_syms
+ * word, the v1 rb adjacency and the run walk until one verifies with
+ * the same checks as the scan path */
+static int hint_commit_offsets(const struct kallrecon_hint *h,
+			       unsigned long *best_cand, int *best_len)
+{
+	int cands[3], nc = 0;
+	u32 v0, ns;
+
+	if (safe_read(&v0, (void *)h->offsets, 4)) {
+		kr_fail_set(KALLRECON_HINT_INVALID);
+		return 0;
+	}
+
+	if (h->num_syms) {
+		if (!safe_read(&ns, (void *)h->num_syms, 4))
+			cands[nc++] = (int)ns;
+	}
+	if (h->relative_base) {
+		unsigned long at = (h->relative_base + 8 + 7) & ~7ULL;
+
+		if (nc < 3 && !safe_read(&ns, (void *)at, 4))
+			cands[nc++] = (int)ns;
+	}
+	if (nc < 3)
+		cands[nc++] = hint_run_len(h->offsets);
+
+	for (int i = 0; i < nc; i++) {
+		if (cands[i] < KS_RUN_MIN)
+			continue;
+		if ((s32)v0 < 0) {
+			if (verify_offsets_selfrel(h->offsets, cands[i])) {
+				publish_offsets(h->offsets, cands[i],
+						best_cand, best_len);
+				return 1;
+			}
+		} else if (commit_offsets(h->offsets, cands[i], best_cand,
+					  best_len)) {
+			return 1;
+		}
+	}
+
+	kr_fail_set(KALLRECON_HINT_INVALID);
+	return 0;
+}
+
 static int discover_kallsyms(unsigned long ti_addr)
 {
+	const struct kallrecon_hint *h = kr_hint();
 	unsigned long best_cand = 0;
 	int best_len = 0;
 	unsigned short ti255;
 	unsigned long scan_start, scan_end;
+	unsigned long scan_back = h->scan_back ? h->scan_back : KS_SCAN_BACK;
+	unsigned long scan_fwd = h->scan_fwd ? h->scan_fwd : KS_SCAN_FWD;
 
 	if (safe_read(&ti255, (void *)(ti_addr + 255 * 2), 2))
 		return 0;
 
-	kltable_addr = find_token_table(ti_addr, ti255);
-	if (!kltable_addr)
-		kltable_addr = ti_addr - KS_FALLBACK_OFF;
-	scan_start = kltable_addr > KS_SCAN_BACK ?
-		(kltable_addr - KS_SCAN_BACK) & ~KS_PAGE_MASK : kernel_base;
-	scan_end = (ti_addr + KS_SCAN_FWD + KS_PAGE_MASK) & ~KS_PAGE_MASK;
+	if (h->token_table) {
+		unsigned short off0;
+		unsigned char c;
+
+		if (safe_read(&off0, (void *)(ti_addr + '0' * 2), 2) ||
+		    safe_read(&c, (void *)(h->token_table + off0), 1) ||
+		    c != '0') {
+			kr_fail_set(KALLRECON_HINT_INVALID);
+			return 0;
+		}
+		kltable_addr = h->token_table;
+	} else {
+		kltable_addr = find_token_table(ti_addr, ti255);
+		if (!kltable_addr)
+			kltable_addr = ti_addr - KS_FALLBACK_OFF;
+	}
+
+	if (h->offsets) {
+		if (!hint_commit_offsets(h, &best_cand, &best_len))
+			return 0;
+		goto found;
+	}
+
+	scan_start = kltable_addr > scan_back ?
+		(kltable_addr - scan_back) & ~KS_PAGE_MASK : kernel_base;
+	scan_end = (ti_addr + scan_fwd + KS_PAGE_MASK) & ~KS_PAGE_MASK;
 
 	ks_dbg("[kallrecon] scan 0x%lx-0x%lx kltable=0x%lx\n",
 		scan_start, scan_end, kltable_addr);
@@ -567,6 +685,7 @@ static int discover_kallsyms(unsigned long ti_addr)
 		goto found;
 #endif
 
+	kr_fail_set(KALLRECON_NO_OFFSETS);
 	ks_dbg("[kallrecon] no offsets found\n");
 	return 0;
 
@@ -587,6 +706,7 @@ found:
 static unsigned long find_token_index(unsigned long start)
 {
 	struct slide_win w;
+	unsigned int n = 0;
 
 	if (slide_init(&w, start, KS_WIN_SIZE, KS_WIN_MARGIN))
 		return 0;
@@ -595,52 +715,103 @@ static unsigned long find_token_index(unsigned long start)
 		unsigned short *ti = (unsigned short *)slide_ptr(&w, slide_buf);
 		if (check_ti_strong(ti))
 			return slide_addr(&w);
+		if (((++n) & 0x3FF) == 0 && kr_timeout_hit())
+			return 0;
 		if (slide_advance(&w, 4))
 			break;
 	}
 	return 0;
 }
 
-static unsigned long detect_seqs(unsigned long cand, unsigned int n)
+/* seqs entry width differs per build: upstream packs 3 byte big
+ * endian, some vendor trees store a native u32. both are sampled the
+ * same way, the winning width is latched into klseqs_stride */
+static unsigned long detect_seqs_stride(unsigned long cand, unsigned int n,
+					int stride)
 {
-	if (!cand || !n)
-		return 0;
-
 	int points[] = {0, 1, 2, n/4, n/4+1, n/4+2, n/2, n/2+1, n/2+2,
 			3*n/4, 3*n/4+1, 3*n/4+2, n-3, n-2, n-1};
 	int np = sizeof(points) / sizeof(points[0]);
 
+	if (!cand || !n)
+		return 0;
+
 	for (int i = 0; i < np; i++) {
 		int idx = points[i];
+		unsigned int seq;
+
 		if (idx < 0 || idx >= (int)n)
 			return 0;
-		unsigned char buf[3];
-		unsigned int seq;
-		if (safe_read(buf, (void *)(cand + idx * 3), 3))
-			return 0;
-		seq = (buf[0] << 16) | (buf[1] << 8) | buf[2];
+		if (stride == 4) {
+			u32 v;
+
+			if (safe_read(&v, (void *)(cand +
+						   (unsigned long)idx * 4), 4))
+				return 0;
+			seq = v;
+		} else {
+			unsigned char buf[3];
+
+			if (safe_read(buf, (void *)(cand +
+						    (unsigned long)idx * 3), 3))
+				return 0;
+			seq = (buf[0] << 16) | (buf[1] << 8) | buf[2];
+		}
 		if (seq >= n)
 			return 0;
 	}
 	return cand;
 }
 
-static void resolve_layout_v3(void)
+static unsigned long detect_seqs_any(unsigned long cand, unsigned int n)
 {
-	/* v3: no rb; num_syms and names sit below the markers */
-	unsigned long below = kltable_addr ? kltable_addr : kloffs_addr;
-	unsigned long num = find_v3_num(below, klnum_val);
+	unsigned long r = detect_seqs_stride(cand, n, 3);
+
+	if (r) {
+		klseqs_stride = 3;
+		return r;
+	}
+	r = detect_seqs_stride(cand, n, 4);
+	if (r)
+		klseqs_stride = 4;
+	return r;
+}
+
+static int resolve_layout_v3(void)
+{
+	const struct kallrecon_hint *h = kr_hint();
+	unsigned long below, num;
+
+	if (h->names && !names_stream_ok(h->names))
+		goto invalid;
+
+	if (h->num_syms) {
+		num = h->num_syms;
+	} else {
+		/* v3: no rb; num_syms and names sit below the markers */
+		below = kltable_addr ? kltable_addr : kloffs_addr;
+		num = find_v3_num(below, klnum_val);
+	}
 
 	if (num) {
 		u32 ns;
 		if (!safe_read(&ns, (void *)num, 4)) {
 			klnum_addr = num;
 			klnum_val = ns;
-			klnames_addr = num + 4;
+			if (h->names)
+				klnames_addr = h->names;
+			else
+				klnames_addr = num + 4;
 		}
 	}
 
-	if (kltable_addr && klnum_val) {
+	if (h->markers) {
+		u32 m0;
+
+		if (safe_read(&m0, (void *)h->markers, 4) || m0 != 0)
+			goto invalid;
+		klmarks_addr = h->markers;
+	} else if (kltable_addr && klnum_val) {
 		unsigned int markers_cnt = (klnum_val + 255) / 256;
 
 		/* v3 labels are .balign 4 (not 8): the array start is size
@@ -648,46 +819,119 @@ static void resolve_layout_v3(void)
 		klmarks_addr = (kltable_addr - markers_cnt * 4) & ~3ULL;
 	}
 
-	if (kloffs_addr && klnum_val)
-		klseqs_addr = detect_seqs(
+	if (h->seqs) {
+		klseqs_addr = detect_seqs_any(h->seqs, klnum_val);
+		if (!klseqs_addr)
+			goto invalid;
+	} else if (kloffs_addr && klnum_val) {
+		klseqs_addr = detect_seqs_any(
 			(kloffs_addr +
 			 (unsigned long)klnum_val * 4 + 3) & ~3ULL,
 			klnum_val);
+	}
+	return 1;
+
+invalid:
+	kr_fail_set(KALLRECON_HINT_INVALID);
+	return 0;
 }
 
-static void resolve_layout_v1(void)
+static int resolve_layout_v1(void)
 {
-	klnum_addr = (klbase_addr + 8 + 7) & ~7ULL;
-	{
+	const struct kallrecon_hint *h = kr_hint();
+
+	if (h->num_syms) {
 		u32 ns;
+
+		klnum_addr = h->num_syms;
 		if (safe_read(&ns, (void *)klnum_addr, 4) ||
 		    (ns != klnum_val && ns != klnum_val - 1))
-			klnum_addr = 0;
+			goto invalid;
+	} else {
+		klnum_addr = (klbase_addr + 8 + 7) & ~7ULL;
+		{
+			u32 ns;
+			if (safe_read(&ns, (void *)klnum_addr, 4) ||
+			    (ns != klnum_val && ns != klnum_val - 1))
+				klnum_addr = 0;
+		}
 	}
-	klnames_addr = (klnum_addr + 4 + 7) & ~7ULL;
 
-	locate_token_table();
+	if (h->names) {
+		if (!names_stream_ok(h->names))
+			goto invalid;
+		klnames_addr = h->names;
+	} else {
+		klnames_addr = (klnum_addr + 4 + 7) & ~7ULL;
+	}
+
+	if (h->token_table)
+		kltable_addr = h->token_table;
+	else
+		locate_token_table();
 
 	unsigned int markers_cnt = (klnum_val + 255) / 256;
 	unsigned long marks_size = markers_cnt * 4;
 
-	unsigned long seqs_cand = kltable_addr ?
-		(kltable_addr - klnum_val * 3) & ~7ULL : 0;
+	if (h->seqs) {
+		klseqs_addr = detect_seqs_any(h->seqs, klnum_val);
+		if (!klseqs_addr)
+			goto invalid;
+	} else {
+		unsigned long seqs_cand = kltable_addr ?
+			(kltable_addr - klnum_val * 3) & ~7ULL : 0;
 
-	klseqs_addr = detect_seqs(seqs_cand, klnum_val);
-	if (klseqs_addr)
+		klseqs_addr = detect_seqs_any(seqs_cand, klnum_val);
+		if (!klseqs_addr && kltable_addr) {
+			seqs_cand = (kltable_addr -
+				     (unsigned long)klnum_val * 4) & ~7ULL;
+			klseqs_addr = detect_seqs_any(seqs_cand, klnum_val);
+		}
+	}
+
+	if (h->markers) {
+		u32 m0;
+
+		if (safe_read(&m0, (void *)h->markers, 4) || m0 != 0)
+			goto invalid;
+		klmarks_addr = h->markers;
+	} else if (klseqs_addr) {
 		klmarks_addr = (klseqs_addr - marks_size) & ~7ULL;
-	else
+	} else {
 		klmarks_addr = (kltable_addr - marks_size) & ~7ULL;
+	}
+	return 1;
+
+invalid:
+	kr_fail_set(KALLRECON_HINT_INVALID);
+	return 0;
 }
 
-static void resolve_layout_v2(void)
+static int resolve_layout_v2(void)
 {
-	klseqs_addr = detect_seqs(klbase_addr + 8, klnum_val);
+	const struct kallrecon_hint *h = kr_hint();
+	unsigned int n = 0;
 
-	locate_token_table();
+	if (h->seqs) {
+		klseqs_addr = detect_seqs_any(h->seqs, klnum_val);
+		if (!klseqs_addr)
+			goto invalid;
+	} else {
+		klseqs_addr = detect_seqs_any(klbase_addr + 8, klnum_val);
+	}
 
-	if (kltable_addr && klnum_val) {
+	if (h->token_table)
+		kltable_addr = h->token_table;
+	else
+		locate_token_table();
+
+	if (h->markers) {
+		u32 m0;
+
+		if (safe_read(&m0, (void *)h->markers, 4) || m0 != 0)
+			goto invalid;
+		klmarks_addr = h->markers;
+	} else if (kltable_addr && klnum_val) {
 		unsigned int markers_cnt = (klnum_val + 255) / 256;
 		unsigned long marks_size = markers_cnt * 4;
 
@@ -699,7 +943,14 @@ static void resolve_layout_v2(void)
 		klmarks_addr = (kltable_addr - marks_size) & ~7ULL;
 	}
 
-	if (klmarks_addr && klnum_val) {
+	if (h->num_syms) {
+		u32 ns;
+
+		klnum_addr = h->num_syms;
+		if (safe_read(&ns, (void *)klnum_addr, 4) ||
+		    (ns != klnum_val && ns != klnum_val - 1))
+			goto invalid;
+	} else if (klmarks_addr && klnum_val) {
 		unsigned long end_addr = klmarks_addr > 0x300000 ?
 			klmarks_addr - 0x300000 : kernel_base;
 
@@ -708,6 +959,8 @@ static void resolve_layout_v2(void)
 		     addr >= end_addr; addr -= 4) {
 			unsigned int v32;
 
+			if (((++n) & 0x3FF) == 0 && kr_timeout_hit())
+				return 0;
 			if (safe_read(&v32, (void *)addr, 4))
 				continue;
 			if (v32 == klnum_val || v32 == klnum_val - 1) {
@@ -717,8 +970,18 @@ static void resolve_layout_v2(void)
 		}
 	}
 
-	if (klnum_addr)
+	if (h->names) {
+		if (!names_stream_ok(h->names))
+			goto invalid;
+		klnames_addr = h->names;
+	} else if (klnum_addr) {
 		klnames_addr = (klnum_addr + 4 + 7) & ~7ULL;
+	}
+	return 1;
+
+invalid:
+	kr_fail_set(KALLRECON_HINT_INVALID);
+	return 0;
 }
 
 static void dump_layout(void)
@@ -789,21 +1052,65 @@ ks_dbg("  klnames @ 0x%lx\n", klnames_addr);
 #endif
 }
 
+/* one attempt does not share state with the next: a failed discovery
+ * may be retried with a changed hint, the consumer decides whether to
+ * widen the window or not */
+void kr_discover_reset(void)
+{
+	sprint_addr = 0;
+	kernel_base = 0;
+	klbase_addr = 0;
+	klbase_val = 0;
+	kloffs_addr = 0;
+	klindex_addr = 0;
+	klseqs_addr = 0;
+	klseqs_stride = 3;
+	klmarks_addr = 0;
+	kltable_addr = 0;
+	klnames_addr = 0;
+	klnum_addr = 0;
+	klnum_val = 0;
+	kl_layout = LAYOUT_V2;
+	is_v1_layout = 0;
+	kl_addr_mode = KS_MODE_RB;
+	kr_markers_reset();
+	kr_cleanup_reset();
+	kr_fail_clear();
+}
+
 int kr_discover_layout(void)
 {
+	const struct kallrecon_hint *h = kr_hint();
 	unsigned long ti_addr;
 
+	kr_timeout_arm(h->timeout_ms);
+
 	sprint_addr = kr_get_sprint_addr();
+	if (!sprint_addr) {
+		kr_fail_set(KALLRECON_NO_ANCHOR);
+		return 0;
+	}
 	kernel_base = sprint_addr & ~KS_2M_MASK;
 	klbase_val = kernel_base;
 
 	ks_dbg("[kallrecon] sprint=0x%lx kernel_base=0x%lx\n",
 		sprint_addr, kernel_base);
 
-	ti_addr = find_token_index(sprint_addr & ~KS_PAGE_MASK);
-	if (!ti_addr) {
-		ks_dbg("[kallrecon] token_index not found\n");
-		return 0;
+	if (h->token_index) {
+		unsigned short ti[256];
+
+		if (safe_read(ti, (void *)h->token_index, sizeof(ti)) ||
+		    !check_ti_strong(ti)) {
+			kr_fail_set(KALLRECON_HINT_INVALID);
+			return 0;
+		}
+		ti_addr = h->token_index;
+	} else {
+		ti_addr = find_token_index(sprint_addr & ~KS_PAGE_MASK);
+		if (!ti_addr) {
+			kr_fail_set(KALLRECON_NO_TOKEN_INDEX);
+			return 0;
+		}
 	}
 	ks_dbg("[kallrecon] ti=0x%lx\n", ti_addr);
 	klindex_addr = ti_addr;
@@ -815,13 +1122,16 @@ int kr_discover_layout(void)
 
 	switch (kl_layout) {
 	case LAYOUT_V3:
-		resolve_layout_v3();
+		if (!resolve_layout_v3())
+			return 0;
 		break;
 	case LAYOUT_V1:
-		resolve_layout_v1();
+		if (!resolve_layout_v1())
+			return 0;
 		break;
 	default:
-		resolve_layout_v2();
+		if (!resolve_layout_v2())
+			return 0;
 		break;
 	}
 

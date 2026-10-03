@@ -14,6 +14,7 @@
 #include "access.h"
 #include "discover.h"
 #include "fastboot.h"
+#include "hint.h"
 
 unsigned long sprint_addr;
 unsigned long kernel_base;
@@ -22,6 +23,7 @@ unsigned long klbase_val;
 unsigned long kloffs_addr;
 unsigned long klindex_addr;
 unsigned long klseqs_addr;
+int klseqs_stride = 3;
 unsigned int  klnum_val;
 unsigned long klmarks_addr;
 unsigned long kltable_addr;
@@ -39,10 +41,10 @@ unsigned long (*kallrecon_module_klp)(const char *name); /* experimental, may be
 static DEFINE_MUTEX(ks_lock);
 static int ks_done;
 
-static void find_kallsyms_base_once(void)
+static int find_kallsyms_base_once(void)
 {
 	if (!kr_discover_layout())
-		return;
+		return 0;
 
 	if (kloffs_addr && klnames_addr && klnum_val) {
 		unsigned long addr = 0;
@@ -70,15 +72,19 @@ static void find_kallsyms_base_once(void)
 			kallrecon_module_klp =
 				(unsigned long (*)(const char *))maddr;
 #endif
+	} else {
+		kr_fail_set(KALLRECON_NO_LAYOUT);
 	}
+	return 1;
 }
 
 void find_kallsyms_base(void)
 {
 	mutex_lock(&ks_lock);
 	if (!ks_done) {
-		find_kallsyms_base_once();
-		ks_done = 1;
+		kr_discover_reset();
+		if (find_kallsyms_base_once())
+			ks_done = 1;
 	}
 	mutex_unlock(&ks_lock);
 }
