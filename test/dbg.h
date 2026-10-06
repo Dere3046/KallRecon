@@ -3,5 +3,6 @@
 #define DBG_H
 
 void dbg_dump(void);
+void variant_diff_run(void);
 
 #endif

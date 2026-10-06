@@ -2,8 +2,8 @@
 # inside anchor.S
 ANCHOR := lib/anchor.o
 
-kallrecon-objs := src/main.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o lib/hint.o $(ANCHOR) src/verify.o
-test_probe-objs := test/test_main.o test/dbg.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o lib/hint.o $(ANCHOR)
+kallrecon-objs := src/main.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o lib/hint.o lib/variant.o $(ANCHOR) src/verify.o
+test_probe-objs := test/test_main.o test/dbg.o test/variant_diff.o lib/core.o lib/access.o lib/discover.o lib/symbol.o lib/slide.o lib/fastboot.o lib/hint.o lib/variant.o $(ANCHOR)
 
 ifeq ($(TARGET),test)
 obj-m := test_probe.o
@@ -18,6 +18,14 @@ endif
 
 ifdef KALLRECON_MODULE_LOOKUP
 ccflags-y += -DKALLRECON_MODULE_LOOKUP
+endif
+
+ifdef KALLRECON_VARIANT_FAST
+ccflags-y += -DKALLRECON_VARIANT_FAST
+endif
+
+ifdef KALLRECON_VARIANT_BISECT
+ccflags-y += -DKALLRECON_VARIANT_BISECT
 endif
 
 ifdef KALLRECON_FAST_BOOT

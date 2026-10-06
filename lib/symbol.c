@@ -19,19 +19,20 @@
 #define __nocfi
 #endif
 
-#define KS_TT_SIZE	2048
-
 /* markers sanity: walking 256 symbols from the stream start must land
  * on the offset stored in markers[1]; only then get_sym_offset() may
  * trust markers to skip ahead */
 static int kl_markers_ok;
 
-/* -DKALLRECON_NO_MARKERS forces the original full names walk */
+/* KALLRECON_NO_MARKERS forces the original full names walk */
+int ks_markers_usable(void)
+{
 #ifdef KALLRECON_NO_MARKERS
-#define ks_markers_usable()	0
+	return 0;
 #else
-#define ks_markers_usable()	(kl_markers_ok == 1)
+	return kl_markers_ok == 1;
 #endif
+}
 
 void kr_markers_reset(void)
 {
@@ -78,11 +79,8 @@ void kr_verify_markers(void)
 
 #define KS_CLEANUP_PROBE	8192
 
-static unsigned short ti_buf[256];
-static unsigned char tt_buf[KS_TT_SIZE];
-
-static int ks_expand_raw(const unsigned char *enc, const unsigned short *ti,
-			 const unsigned char *tt, char *buf, int max);
+unsigned short ti_buf[256];
+unsigned char tt_buf[KS_TT_SIZE];
 
 /* strip one LTO suffix. SEQS (default) is the original GKI proven rule
  * and costs nothing; AUTO probes the names stream once and is the
@@ -225,8 +223,8 @@ unsigned long sym_addr(int idx)
  * tt points at token_table whenever the encoding sits in the slide
  * window, NULL reads tokens through safe_read instead (enc is then a
  * stack copy). ti is always a local array, loaded once per batch */
-static int ks_expand_raw(const unsigned char *enc, const unsigned short *ti,
-			 const unsigned char *tt, char *buf, int max)
+int ks_expand_raw(const unsigned char *enc, const unsigned short *ti,
+		  const unsigned char *tt, char *buf, int max)
 {
 	unsigned int len = *enc++;
 	int skipped = 0;
@@ -382,7 +380,7 @@ unsigned int get_sym_offset(unsigned int seq)
 	return p - (const u8 *)klnames_addr;
 }
 
-static DEFINE_MUTEX(ks_linear_lock);
+DEFINE_MUTEX(ks_linear_lock);
 
 static unsigned long name_to_addr_linear_locked(const char *name)
 {

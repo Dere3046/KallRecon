@@ -135,6 +135,36 @@ the compressed entry occupies, or `0` when `max` is not positive or on a
 read/decode failure — with a positive `max`, `buf` is then set to an empty
 string.
 
+## Variant lookup
+
+on CFI_CLANG kernels the callable target of a function pointer can be a
+suffix variant of the plain name, for example the `.cfi_jt` jump table
+entry. LTO builds add `.llvm.` clones on top.
+
+**`unsigned long kallrecon_find_variant(const char *name, int prefer_cfi_jt)`**
+
+resolve a symbol that may only exist with a suffix variant. a match is
+the exact name, or a name that has `name` as prefix followed by `.` or
+`$`. with `prefer_cfi_jt` a `.cfi_jt` variant wins over every other
+match, otherwise the first match in address order is returned. zero
+means not found. declared in `lib/variant.h`.
+
+the names stream is read through the sliding window, a stream hole
+resyncs at the next 256 symbol marker (markers are verified during
+discovery). `KALLRECON_VARIANT_FAST` swaps the full expansion for an
+incremental token matcher, off by default, an implementation variant
+with identical results.
+
+**`void kallrecon_set_variant_bisect(int enable)`**
+
+only compiled with `KALLRECON_VARIANT_BISECT`, off at compile time by
+default and off at runtime until this call enables it. requires the
+seqs table (`klseqs_addr` nonzero), otherwise the scan path runs.
+searches both seqs sort spaces in use (raw names and names stripped at
+`.llvm.`), merges the candidates, validates every candidate against the
+raw rules and falls back to the scan when nothing is found. explicit
+opt in: verify the result on the target kernel before enabling.
+
 ## Name cleanup
 
 kallsyms names carry LTO suffixes. the built in cleanup strips one of
@@ -198,6 +228,13 @@ unsigned int chunksz, unsigned int margin)`**
 
 `KALLRECON_MODULE_LOOKUP=1` — enable the experimental
 `module_kallsyms_lookup_name` fallback
+
+`KALLRECON_VARIANT_FAST=1` — incremental variant matcher, off by
+default, an implementation variant with identical results
+
+`KALLRECON_VARIANT_BISECT=1` — compile the seqs based variant bisect
+together with the runtime `kallrecon_set_variant_bisect` switch, off by
+default
 
 `KALLRECON_FAST_BOOT=1` — sprint-walk fast path for the initial
 `kallsyms_lookup_name` bootstrap on linear (no seqs) kernels, falls
