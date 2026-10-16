@@ -16,6 +16,10 @@ ifeq ($(CHECK),1)
 ccflags-y += -DKALLRECON_CHECK
 endif
 
+ifeq ($(DEBUG),1)
+ccflags-y += -DKALLRECON_DEBUG
+endif
+
 ifdef KALLRECON_MODULE_LOOKUP
 ccflags-y += -DKALLRECON_MODULE_LOOKUP
 endif
@@ -42,6 +46,31 @@ endif
 
 ifdef KALLRECON_FIRST_HIT
 ccflags-y += -DKALLRECON_FIRST_HIT
+endif
+
+ifdef KALLRECON_SCAN_RANGE
+ccflags-y += -DKALLRECON_SCAN_RANGE
+endif
+
+ifdef KALLRECON_RAANA
+RAANA_EXEC ?= multi
+ccflags-y += -DKALLRECON_RAANA
+RAANA_OBJS := lib/raana/raana.o lib/raana/raana_task.o \
+	lib/raana/raana_run_$(RAANA_EXEC).o
+kallrecon-objs += $(RAANA_OBJS)
+test_probe-objs += $(RAANA_OBJS)
+endif
+
+ifdef KALLRECON_RAANA_FALLBACK
+ccflags-y += -DKALLRECON_RAANA_FALLBACK
+endif
+
+ifdef KALLRECON_RAANA_NUM
+ccflags-y += -DKALLRECON_RAANA_NUM
+endif
+
+ifdef KALLRECON_NAMES_LOOSE
+ccflags-y += -DKALLRECON_NAMES_LOOSE
 endif
 
 ccflags-y += -std=gnu11

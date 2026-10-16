@@ -4,6 +4,7 @@
 #include <linux/printk.h>
 #include <linux/init.h>
 #include <linux/errno.h>
+#include <linux/ktime.h>
 #include "../lib/core.h"
 #include "../lib/hint.h"
 #include "../lib/variant.h"
@@ -52,7 +53,14 @@ static int __init test_probe_init(void)
 	};
 
 	kallrecon_supply(&hint);
-	find_kallsyms_base();
+	{
+		u64 t0 = ktime_get_ns();
+
+		find_kallsyms_base();
+		pr_info("[test] discovery %llu us\n",
+			(ktime_get_ns() - t0) / 1000);
+	}
+	pr_info("[test] retry %d\n", kallrecon_retry());
 
 #ifdef KALLRECON_VARIANT_BISECT
 	kallrecon_set_variant_bisect(1);

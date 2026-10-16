@@ -17,6 +17,18 @@ if it fails `klnum_val` stays zero and `kallrecon_klp` is not set;
 `sprint_addr`/`kernel_base`/`klbase_val` are populated regardless
 (useful for failure diagnosis).
 
+repeated calls are a no-op once it ran, `kallrecon_retry` re-attempts
+a missing step explicitly.
+
+**`int kallrecon_retry(void)`**
+
+explicit retry, fills in whatever is still missing. without a ready
+layout it re-runs discovery, a ready layout with an unresolved
+`kallsyms_lookup_name` re-attempts only the symbol resolution. returns
+1 when `kallrecon_klp` is ready. useful after changing cleanup settings
+or hints, the cost of a re-attempt is the resolution itself which is a
+binary search on seqs kernels and a names stream walk on linear ones.
+
 ### key globals
 
 `klnum_val`: total number of symbols discovered
@@ -59,8 +71,14 @@ fails discovery with `KALLRECON_HINT_INVALID` and is never trusted.
 `num_syms`, `names`, `markers`, `seqs`, `token_table`, `token_index`
 (table addresses), `scan_back`, `scan_fwd` (auto scan window in bytes,
 zero means the default 4MiB / 2MiB, a consumer that enlarges the window
-pays the extra scan time) and `timeout_ms` (discovery cap, zero means
-no cap).
+pays the extra scan time), `timeout_ms` (discovery cap, zero means
+no cap) and `scan`.
+
+`scan` is a `struct kallrecon_scan_range` holding an absolute address
+window `lo` / `hi`. both zero means unset. with `KALLRECON_SCAN_RANGE`
+the raana search sweeps the window chunks first, it is a priority order
+only, unset falls back to the default range. set the window to cover a
+whole table, a window edge landing inside a run can split it.
 
 `offsets` alone is enough for the common shifted table case, the rest
 is derived and verified as usual.
@@ -224,7 +242,10 @@ unsigned int chunksz, unsigned int margin)`**
 
 `TARGET=test`: build the test probe with `KALLRECON_DEBUG` logging
 
-`CHECK=1`: extra sanity checks in discovery
+`CHECK=1`: extra sanity checks in discovery, includes the full seqs
+table permutation check
+
+`DEBUG=1`: `KALLRECON_DEBUG` logging for the regular module
 
 `KALLRECON_MODULE_LOOKUP=1`: enable the experimental
 `module_kallsyms_lookup_name` fallback
@@ -247,4 +268,28 @@ the markers shortcut
 
 `KALLRECON_FIRST_HIT=1`: the offsets scan stops at the first verified
 candidate instead of scanning the window and keeping the longest
-verified run, off by default
+verified run, off by default. under `KALLRECON_RAANA` it also drops
+the confirmation pass over a consumer scan range hit
+
+`KALLRECON_RAANA=1`: replace the legacy search engine with the raana
+collection sliding window search at compile time, off by default. the
+two engines are exclusive, a raana build carries no legacy scanner and
+a legacy build carries no raana. `RAANA_EXEC=multi` (default) or
+`single` selects the executor battery, both run the same flow and task
+set. raana builds do not cover pre 6.18 x86
+
+`KALLRECON_RAANA_FALLBACK=1`: compile the legacy scanner in as a
+fallback behind raana, used when raana discovery fails. off by default,
+meaningful only together with `KALLRECON_RAANA`, trades module size for
+the fallback path
+
+`KALLRECON_SCAN_RANGE=1`: let consumers steer raana with the absolute
+address window in `kallrecon_hint.scan`, searched first, off by default
+
+`KALLRECON_RAANA_NUM=1`: scan the v2 num_syms word with the swar lane
+matcher instead of word compares, off by default, usable with or
+without `KALLRECON_RAANA`
+
+`KALLRECON_NAMES_LOOSE=1`: auto derived names only get a relaxed
+length bound (512) instead of the strict 128 that hints are held to,
+off by default, `CHECK=1` forces the strict bound again

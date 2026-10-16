@@ -41,41 +41,48 @@ unsigned long (*kallrecon_module_klp)(const char *name); /* experimental, may be
 static DEFINE_MUTEX(ks_lock);
 static int ks_done;
 
-static int find_kallsyms_base_once(void)
+static int ks_layout_ready(void)
+{
+	return kloffs_addr && klnames_addr && klnum_val;
+}
+
+static int ks_discover_once(void)
 {
 	if (!kr_discover_layout())
 		return 0;
+	if (!ks_layout_ready())
+		kr_fail_set(KALLRECON_NO_LAYOUT);
+	return 1;
+}
 
-	if (kloffs_addr && klnames_addr && klnum_val) {
-		unsigned long addr = 0;
+static void ks_resolve_klp(void)
+{
+	unsigned long addr = 0;
 
 #ifdef KALLRECON_FAST_BOOT
-		/* only linear (no seqs) kernels need the walk, the seqs
-		 * lookup is a fast binary search, KALLRECON_FAST_BOOT_ALL
-		 * skips the seqs check */
-		if (KALLRECON_FAST_BOOT_ALL || !klseqs_addr) {
-			addr = fast_find_klp();
-			ks_dbg("[kallrecon] fast boot: %s\n",
-				addr ? "hit" : "miss");
-		}
+	/* only linear (no seqs) kernels need the walk, the seqs
+	 * lookup is a fast binary search, KALLRECON_FAST_BOOT_ALL
+	 * skips the seqs check */
+	if (KALLRECON_FAST_BOOT_ALL || !klseqs_addr) {
+		addr = fast_find_klp();
+		ks_dbg("[kallrecon] fast boot: %s\n", addr ? "hit" : "miss");
+	}
 #endif
-		if (!addr)
-			addr = kallsyms_name_to_addr("kallsyms_lookup_name");
-		if (addr)
-			kallrecon_klp = (unsigned long (*)(const char *))addr;
+	if (!addr)
+		addr = kallsyms_name_to_addr("kallsyms_lookup_name");
+	if (addr)
+		kallrecon_klp = (unsigned long (*)(const char *))addr;
 
 #ifdef KALLRECON_MODULE_LOOKUP
+	if (!kallrecon_module_klp) {
 		unsigned long maddr =
 			kallsyms_name_to_addr("module_kallsyms_lookup_name");
 
 		if (maddr)
 			kallrecon_module_klp =
 				(unsigned long (*)(const char *))maddr;
-#endif
-	} else {
-		kr_fail_set(KALLRECON_NO_LAYOUT);
 	}
-	return 1;
+#endif
 }
 
 void find_kallsyms_base(void)
@@ -83,8 +90,31 @@ void find_kallsyms_base(void)
 	mutex_lock(&ks_lock);
 	if (!ks_done) {
 		kr_discover_reset();
-		if (find_kallsyms_base_once())
+		if (ks_discover_once()) {
 			ks_done = 1;
+			if (ks_layout_ready())
+				ks_resolve_klp();
+		}
 	}
 	mutex_unlock(&ks_lock);
+}
+
+int kallrecon_retry(void)
+{
+	int ready;
+
+	mutex_lock(&ks_lock);
+	if (!ks_layout_ready()) {
+		kr_discover_reset();
+		if (!ks_discover_once()) {
+			mutex_unlock(&ks_lock);
+			return 0;
+		}
+		ks_done = 1;
+	}
+	if (ks_layout_ready() && !kallrecon_klp)
+		ks_resolve_klp();
+	ready = kallrecon_klp != NULL;
+	mutex_unlock(&ks_lock);
+	return ready;
 }

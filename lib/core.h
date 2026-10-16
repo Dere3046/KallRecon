@@ -37,12 +37,21 @@ enum layout_v {
 extern enum layout_v kl_layout;
 extern int is_v1_layout;	/* mirror of kl_layout == LAYOUT_V1 */
 
+/* absolute kernel address window both zero means unset
+ * consumers may fill it to steer searches the range is only
+ * a priority order */
+struct kallrecon_scan_range {
+	unsigned long lo;
+	unsigned long hi;
+};
+
 extern unsigned long (*kallrecon_klp)(const char *name);
 #ifdef KALLRECON_MODULE_LOOKUP
 extern unsigned long (*kallrecon_module_klp)(const char *name); /* experimental, may be unstable */
 #endif
 
 void find_kallsyms_base(void);
+int kallrecon_retry(void);
 
 enum kallrecon_cleanup {
 	KALLRECON_CLEANUP_AUTO = 0,

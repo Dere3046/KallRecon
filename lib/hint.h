@@ -36,6 +36,8 @@ struct kallrecon_hint {
 	unsigned long scan_back;
 	unsigned long scan_fwd;
 	unsigned int  timeout_ms;
+
+	struct kallrecon_scan_range scan;
 };
 
 struct kallrecon_layout {
