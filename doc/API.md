@@ -19,22 +19,22 @@ if it fails `klnum_val` stays zero and `kallrecon_klp` is not set;
 
 ### key globals
 
-`klnum_val` — total number of symbols discovered
+`klnum_val`: total number of symbols discovered
 
-`klbase_val` — kernel text base, the value of `kallsyms_relative_base`
+`klbase_val`: kernel text base, the value of `kallsyms_relative_base`
 
-`kl_layout` — LAYOUT_V1 / LAYOUT_V2 / LAYOUT_V3. v1 is the pre-6.4 layout
+`kl_layout`: LAYOUT_V1 / LAYOUT_V2 / LAYOUT_V3. v1 is the pre-6.4 layout
 (offsets before token_index), v2 the 6.4+ layout (offsets after
 token_index), v3 the 7.0+ self relative layout without a relative base.
 `is_v1_layout` stays as a mirror of `kl_layout == LAYOUT_V1` for existing
 consumers
 
-`sprint_addr` — runtime address of `sprint_symbol`, the discovery anchor
+`sprint_addr`: runtime address of `sprint_symbol`, the discovery anchor
 
 low level table addresses, ready after discovery:
 
 `klbase_addr`, `kloffs_addr`, `klindex_addr`, `klseqs_addr`, `klmarks_addr`,
-`kltable_addr`, `klnames_addr`, `klnum_addr` — raw kernel addresses of each
+`kltable_addr`, `klnames_addr`, `klnum_addr`: raw kernel addresses of each
 kallsyms sub-table. `klseqs_addr` nonzero means the seqs layout
 (introduced in 6.1.42; all GKI 6.1 builds have it).
 
@@ -132,7 +132,7 @@ on the seqs layout (`klseqs_addr` nonzero). `get_sym_offset` returns
 decode one compressed symbol from token_table at offset `off` into `buf`.
 used for manual scanning over the names table. returns the number of bytes
 the compressed entry occupies, or `0` when `max` is not positive or on a
-read/decode failure — with a positive `max`, `buf` is then set to an empty
+read/decode failure: with a positive `max`, `buf` is then set to an empty
 string.
 
 ## Variant lookup
@@ -171,12 +171,12 @@ kallsyms names carry LTO suffixes. the built in cleanup strips one of
 them before comparing, so the query name you pass to lookup functions
 can stay clean.
 
-- `KALLRECON_CLEANUP_SEQS` (default) — the original rule: `.llvm.` when
+- `KALLRECON_CLEANUP_SEQS` (default): the original rule, `.llvm.` when
   the seqs table is present, the last `$` otherwise. GKI verified,
   deterministic, no probe cost
-- `KALLRECON_CLEANUP_LLVM` — always strip at `.llvm.`
-- `KALLRECON_CLEANUP_DOLLAR` — always strip at the last `$`
-- `KALLRECON_CLEANUP_AUTO` — probes the names stream once (up to 8192
+- `KALLRECON_CLEANUP_LLVM`: always strip at `.llvm.`
+- `KALLRECON_CLEANUP_DOLLAR`: always strip at the last `$`
+- `KALLRECON_CLEANUP_AUTO`: probes the names stream once (up to 8192
   entries) for `.llvm.` or `$`, exactly one found is used, both or
   neither falls back to the `SEQS` rule. opt-in setting recommended for
   custom kernels with a different suffix style or a vendor seqs variant
@@ -209,7 +209,7 @@ memory the same way.
 `lib/slide.h` provides a chunked paging helper for scanning large kernel
 ranges without pinning them.
 
-**`struct slide_win`** — `addr` current kernel position, `chunksz` page
+**`struct slide_win`**: `addr` current kernel position, `chunksz` page
 size (64KB default), `margin` overlap (512B), `off` offset inside chunk
 
 **`int slide_init(struct slide_win *w, unsigned long pos,
@@ -222,25 +222,29 @@ unsigned int chunksz, unsigned int margin)`**
 
 ## Build options
 
-`TARGET=test` — build the test probe with `KALLRECON_DEBUG` logging
+`TARGET=test`: build the test probe with `KALLRECON_DEBUG` logging
 
-`CHECK=1` — extra sanity checks in discovery
+`CHECK=1`: extra sanity checks in discovery
 
-`KALLRECON_MODULE_LOOKUP=1` — enable the experimental
+`KALLRECON_MODULE_LOOKUP=1`: enable the experimental
 `module_kallsyms_lookup_name` fallback
 
-`KALLRECON_VARIANT_FAST=1` — incremental variant matcher, off by
+`KALLRECON_VARIANT_FAST=1`: incremental variant matcher, off by
 default, an implementation variant with identical results
 
-`KALLRECON_VARIANT_BISECT=1` — compile the seqs based variant bisect
+`KALLRECON_VARIANT_BISECT=1`: compile the seqs based variant bisect
 together with the runtime `kallrecon_set_variant_bisect` switch, off by
 default
 
-`KALLRECON_FAST_BOOT=1` — sprint-walk fast path for the initial
+`KALLRECON_FAST_BOOT=1`: sprint-walk fast path for the initial
 `kallsyms_lookup_name` bootstrap on linear (no seqs) kernels, falls
 back to the full lookup, off by default, only meant for speed
 measurement. `KALLRECON_FAST_BOOT_ALL=1` drops the seqs check and
 runs the walk on every kernel
 
-`KALLRECON_NO_MARKERS=1` — always walk the full names table, never use
+`KALLRECON_NO_MARKERS=1`: always walk the full names table, never use
 the markers shortcut
+
+`KALLRECON_FIRST_HIT=1`: the offsets scan stops at the first verified
+candidate instead of scanning the window and keeping the longest
+verified run, off by default

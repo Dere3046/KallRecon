@@ -40,6 +40,10 @@ ifdef KALLRECON_NO_MARKERS
 ccflags-y += -DKALLRECON_NO_MARKERS
 endif
 
+ifdef KALLRECON_FIRST_HIT
+ccflags-y += -DKALLRECON_FIRST_HIT
+endif
+
 ccflags-y += -std=gnu11
 ccflags-y += -Wno-declaration-after-statement
 ccflags-y += -Wno-unused-variable

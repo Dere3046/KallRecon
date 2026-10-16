@@ -27,6 +27,12 @@
 #define KS_2M_MASK	0x1FFFFFULL	/* kernel base alignment */
 #define KS_PAGE_MASK	0xFFFULL	/* page alignment */
 
+#ifdef KALLRECON_FIRST_HIT
+#define KS_FIRST_HIT(found)	do { if (found) return 1; } while (0)
+#else
+#define KS_FIRST_HIT(found)	do { } while (0)
+#endif
+
 static int check_ti_strong(unsigned short *ti)
 {
 	if (ti[0] != 0)
@@ -326,8 +332,10 @@ static int scan_both(unsigned long start, unsigned long end,
 		/* a hole hop breaks both runs: the data does not continue */
 		if (r2.active && addr != r2.prev_addr + 4)
 			scan_run_close(&r2, 0, best_cand, best_len, &found);
+		KS_FIRST_HIT(found);
 		if (r3.active && addr != r3.prev_addr + 4)
 			scan_run_close(&r3, 1, best_cand, best_len, &found);
+		KS_FIRST_HIT(found);
 
 		v = *(u32 *)slide_ptr(&w, slide_buf);
 
@@ -335,6 +343,7 @@ static int scan_both(unsigned long start, unsigned long end,
 			if ((int)v < r2.prev) {
 				scan_run_close(&r2, 0, best_cand, best_len,
 					       &found);
+				KS_FIRST_HIT(found);
 				if (v == 0) {
 					r2.active = 1;
 					r2.cand = addr;
@@ -359,6 +368,7 @@ static int scan_both(unsigned long start, unsigned long end,
 			if ((s32)v < r3.prev - 4) {
 				scan_run_close(&r3, 1, best_cand, best_len,
 					       &found);
+				KS_FIRST_HIT(found);
 				if ((s32)v < 0) {
 					r3.active = 1;
 					r3.cand = addr;
@@ -387,6 +397,7 @@ static int scan_both(unsigned long start, unsigned long end,
 
 	if (r2.active)
 		scan_run_close(&r2, 0, best_cand, best_len, &found);
+	KS_FIRST_HIT(found);
 	if (r3.active)
 		scan_run_close(&r3, 1, best_cand, best_len, &found);
 
