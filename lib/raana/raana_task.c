@@ -37,6 +37,8 @@ static void raana_ti_record(struct raana_ctx *ctx, unsigned long addr)
 	spin_lock(&ctx->lock);
 	if (ctx->nti < RAANA_MAX_TI)
 		ctx->ti_hits[ctx->nti++] = addr;
+	if (!ctx->ceil || addr < ctx->ceil)
+		ctx->ceil = addr;
 	spin_unlock(&ctx->lock);
 }
 
@@ -53,9 +55,12 @@ static unsigned long raana_probe(unsigned long addr, unsigned long end)
 {
 	unsigned char tmp[8];
 	unsigned long pos = addr;
+	unsigned int n = 0;
 
 	while (pos < end) {
 		if (safe_read(tmp, (void *)pos, sizeof(tmp)))
+			break;
+		if (((++n) & 0xFF) == 0 && kr_timeout_hit())
 			break;
 		pos += PAGE_SIZE;
 	}
@@ -141,36 +146,40 @@ static unsigned long raana_chunk_addr(struct raana_ctx *ctx, int idx)
 int raana_token_worker(struct raana_worker *wk)
 {
 	struct raana_ctx *ctx = wk->ctx;
-	unsigned int n = 0;
 
 	for (;;) {
-		unsigned long addr;
+		unsigned long addr, ceil;
 		int idx, stop;
 
 		spin_lock(&ctx->lock);
 		idx = ctx->next++;
 		stop = ctx->stop;
+		ceil = ctx->ceil;
 		spin_unlock(&ctx->lock);
 		if (stop)
 			break;
 		if (idx >= ctx->nchunks)
 			break;
 		addr = raana_chunk_addr(ctx, idx);
-		if (raana_token_window(ctx, addr)) {
+		if (ceil && addr > ceil)
+			continue;
+		if (raana_token_window(ctx, addr))
+			continue;
+		if (kr_timeout_hit()) {
 			raana_stop_set(ctx);
 			break;
 		}
-		if (((++n) & 0x3F) == 0 && kr_timeout_hit())
-			raana_stop_set(ctx);
 	}
 	return 0;
 }
 
-/* find the next zero dword at or after *pos advances *pos when idle */
+/* find the next zero dword at or after *pos advances *pos when idle
+ * returns 1 on a hit 0 at the end and -1 on timeout */
 static int raana_r2_idle(unsigned long *pos, unsigned long scan_end,
 			 unsigned long *out)
 {
 	unsigned long p = *pos;
+	unsigned int n = 0;
 
 	while (p + 16 <= scan_end) {
 		u64 z0 = raana_zero32(
@@ -198,6 +207,8 @@ static int raana_r2_idle(unsigned long *pos, unsigned long scan_end,
 			}
 		}
 		p += 16;
+		if (((++n) & 0x3FF) == 0 && kr_timeout_hit())
+			return -1;
 	}
 	while (p + 8 <= scan_end) {
 		u64 z = raana_zero32(
@@ -228,10 +239,10 @@ static int raana_r2_close(struct raana_run *r, unsigned long *best_cand,
 	int len = r->len;
 	int ok = 0;
 
-	if (len >= RAANA_RUN_MIN && len > *best_len) {
+	if (len >= KS_RUN_MIN && len > *best_len) {
 		int use = len;
 
-		if (r->prev != 0 && (r->prev & RAANA_2M_MASK) == 0)
+		if (r->prev != 0 && (r->prev & KS_2M_MASK) == 0)
 			use--;
 		if (kr_commit_offsets(r->cand, use, best_cand, best_len)) {
 			*hc = r->cand;
@@ -243,10 +254,47 @@ static int raana_r2_close(struct raana_run *r, unsigned long *best_cand,
 	return ok;
 }
 
-static int raana_hit_stop(struct raana_ctx *ctx, unsigned long hc, int hl);
+static int raana_r2_scan(struct raana_ctx *ctx, unsigned long start,
+			 unsigned long end, int *stop, unsigned long confirm,
+			 int clen);
+static int raana_r3_scan(struct raana_ctx *ctx, unsigned long start,
+			 unsigned long end, int *stop, unsigned long confirm,
+			 int clen);
 
-static int raana_r2_seg(struct raana_ctx *ctx, unsigned long start,
-			unsigned long end, int *stop)
+/* second independent derivation of a verified candidate over its own
+ * span the same run machine must close the same run again */
+static int raana_confirm(struct raana_ctx *ctx, unsigned long cand, int len,
+			 int selfrel)
+{
+	unsigned long start = (cand - RAANA_CROSS_PAD) & ~KS_PAGE_MASK;
+	unsigned long end = cand + (unsigned long)len * 4 + RAANA_CROSS_PAD;
+	int stop = 0;
+
+	if (selfrel)
+		return raana_r3_scan(ctx, start, end, &stop, cand, len);
+	return raana_r2_scan(ctx, start, end, &stop, cand, len);
+}
+
+static int raana_hit_stop(struct raana_ctx *ctx, unsigned long hc, int hl,
+			  int selfrel)
+{
+	ctx->hit_cand = hc;
+	ctx->hit_len = hl;
+	if (ctx->first_hit || !ctx->range_active) {
+		ctx->hit_ok = 1;
+		return 1;
+	}
+	if (raana_confirm(ctx, hc, hl, selfrel)) {
+		ctx->hit_ok = 1;
+		return 1;
+	}
+	ks_dbg("[raana] confirm miss 0x%lx len=%d\n", hc, hl);
+	return 0;
+}
+
+static int raana_r2_scan(struct raana_ctx *ctx, unsigned long start,
+			 unsigned long end, int *stop, unsigned long confirm,
+			 int clen)
 {
 	struct raana_run r = {0};
 	unsigned long best_cand = 0;
@@ -254,9 +302,14 @@ static int raana_r2_seg(struct raana_ctx *ctx, unsigned long start,
 	unsigned long readable, scan_end, pos, o;
 	unsigned int m = 0;
 
-	start &= ~RAANA_PAGE_MASK;
-	end = (end + RAANA_PAGE_MASK) & ~RAANA_PAGE_MASK;
+	start &= ~KS_PAGE_MASK;
+	if (!confirm)
+		end = (end + KS_PAGE_MASK) & ~KS_PAGE_MASK;
 	readable = raana_probe(start, end + PAGE_SIZE);
+	if (kr_timeout_hit()) {
+		*stop = 1;
+		return 0;
+	}
 	scan_end = readable < end ? readable : end;
 	pos = start;
 
@@ -268,70 +321,13 @@ static int raana_r2_seg(struct raana_ctx *ctx, unsigned long start,
 			return 0;
 		}
 		if (!r.active) {
-			if (!raana_r2_idle(&pos, scan_end, &o))
-				break;
-			r.active = 1;
-			r.cand = o;
-			r.prev = 0;
-			r.len = 1;
-			r.prev_addr = o;
-			pos = o + 4;
-			continue;
-		}
-		v = *(unsigned int *)pos;
-		if ((int)v < r.prev) {
-			unsigned long hc;
-			int hl;
+			int rc = raana_r2_idle(&pos, scan_end, &o);
 
-			if (raana_r2_close(&r, &best_cand, &best_len, &hc, &hl) &&
-			    raana_hit_stop(ctx, hc, hl)) {
+			if (rc < 0) {
 				*stop = 1;
-				return 1;
+				return 0;
 			}
-			if (v == 0) {
-				r.active = 1;
-				r.cand = pos;
-				r.prev = 0;
-				r.len = 1;
-				r.prev_addr = pos;
-			}
-		} else {
-			r.prev = (int)v;
-			r.len++;
-			r.prev_addr = pos;
-		}
-		pos += 4;
-	}
-
-	if (r.active) {
-		unsigned long hc;
-		int hl;
-
-		if (raana_r2_close(&r, &best_cand, &best_len, &hc, &hl) &&
-		    raana_hit_stop(ctx, hc, hl))
-			*stop = 1;
-	}
-	return ctx->hit_ok;
-}
-
-/* second independent derivation of a verified candidate over its own
- * span the run machine must close the same run again */
-static int raana_recheck(unsigned long cand, int len)
-{
-	struct raana_run r = {0};
-	unsigned long best_cand = 0;
-	int best_len = 0;
-	unsigned long start = (cand - RAANA_CROSS_PAD) & ~RAANA_PAGE_MASK;
-	unsigned long end = cand + (unsigned long)len * 4 + RAANA_CROSS_PAD;
-	unsigned long readable = raana_probe(start, end + PAGE_SIZE);
-	unsigned long scan_end = readable < end ? readable : end;
-	unsigned long pos = start, o;
-
-	while (pos + 4 <= scan_end) {
-		unsigned int v;
-
-		if (!r.active) {
-			if (!raana_r2_idle(&pos, scan_end, &o))
+			if (!rc)
 				break;
 			r.active = 1;
 			r.cand = o;
@@ -346,9 +342,16 @@ static int raana_recheck(unsigned long cand, int len)
 			unsigned long hc;
 			int hl;
 
-			if (raana_r2_close(&r, &best_cand, &best_len, &hc, &hl) &&
-			    hc == cand && hl - len <= 1 && len - hl <= 1)
-				return 1;
+			if (raana_r2_close(&r, &best_cand, &best_len, &hc, &hl)) {
+				if (confirm) {
+					if (hc == confirm && hl - clen <= 1 &&
+					    clen - hl <= 1)
+						return 1;
+				} else if (raana_hit_stop(ctx, hc, hl, 0)) {
+					*stop = 1;
+					return 1;
+				}
+			}
 			if (v == 0) {
 				r.active = 1;
 				r.cand = pos;
@@ -368,27 +371,23 @@ static int raana_recheck(unsigned long cand, int len)
 		unsigned long hc;
 		int hl;
 
-		if (raana_r2_close(&r, &best_cand, &best_len, &hc, &hl) &&
-		    hc == cand && hl - len <= 1 && len - hl <= 1)
-			return 1;
+		if (raana_r2_close(&r, &best_cand, &best_len, &hc, &hl)) {
+			if (confirm) {
+				if (hc == confirm && hl - clen <= 1 &&
+				    clen - hl <= 1)
+					return 1;
+			} else if (raana_hit_stop(ctx, hc, hl, 0)) {
+				*stop = 1;
+			}
+		}
 	}
-	return 0;
+	return confirm ? 0 : ctx->hit_ok;
 }
 
-static int raana_hit_stop(struct raana_ctx *ctx, unsigned long hc, int hl)
+static int raana_r2_seg(struct raana_ctx *ctx, unsigned long start,
+			unsigned long end, int *stop)
 {
-	ctx->hit_cand = hc;
-	ctx->hit_len = hl;
-	if (ctx->first_hit || !ctx->range_active) {
-		ctx->hit_ok = 1;
-		return 1;
-	}
-	if (raana_recheck(hc, hl)) {
-		ctx->hit_ok = 1;
-		return 1;
-	}
-	ks_dbg("[raana] confirm miss 0x%lx len=%d\n", hc, hl);
-	return 0;
+	return raana_r2_scan(ctx, start, end, stop, 0, 0);
 }
 
 static int raana_r3_close(struct raana_run *r, unsigned long *best_cand,
@@ -396,7 +395,7 @@ static int raana_r3_close(struct raana_run *r, unsigned long *best_cand,
 {
 	int ok = 0;
 
-	if (r->len >= RAANA_RUN_MIN && r->len > *best_len &&
+	if (r->len >= KS_RUN_MIN && r->len > *best_len &&
 	    kr_commit_selfrel(r->cand, r->len, best_cand, best_len)) {
 		*hc = r->cand;
 		*hl = *best_len;
@@ -408,61 +407,9 @@ static int raana_r3_close(struct raana_run *r, unsigned long *best_cand,
 
 /* self relative layout v3 the run ascends within a four byte
  * tolerance and starts on any negative dword */
-static int raana_selfrel_recheck(unsigned long cand, int len)
-{
-	struct raana_run r = {0};
-	unsigned long best_cand = 0;
-	int best_len = 0;
-	unsigned long start = (cand - RAANA_CROSS_PAD) & ~RAANA_PAGE_MASK;
-	unsigned long end = cand + (unsigned long)len * 4 + RAANA_CROSS_PAD;
-	unsigned long readable = raana_probe(start, end + PAGE_SIZE);
-	unsigned long scan_end = readable < end ? readable : end;
-	unsigned long pos = start;
-
-	while (pos + 4 <= scan_end) {
-		unsigned int v = *(unsigned int *)pos;
-
-		if (r.active) {
-			if ((int)v < r.prev - 4) {
-				unsigned long hc;
-				int hl;
-
-				if (raana_r3_close(&r, &best_cand, &best_len,
-						   &hc, &hl) &&
-				    hc == cand && hl - len <= 1 && len - hl <= 1)
-					return 1;
-				if ((int)v < 0) {
-					r.active = 1;
-					r.cand = pos;
-					r.prev = (int)v;
-					r.len = 1;
-				}
-			} else {
-				r.prev = (int)v;
-				r.len++;
-			}
-		} else if ((int)v < 0) {
-			r.active = 1;
-			r.cand = pos;
-			r.prev = (int)v;
-			r.len = 1;
-		}
-		pos += 4;
-	}
-
-	if (r.active) {
-		unsigned long hc;
-		int hl;
-
-		if (raana_r3_close(&r, &best_cand, &best_len, &hc, &hl) &&
-		    hc == cand && hl - len <= 1 && len - hl <= 1)
-			return 1;
-	}
-	return 0;
-}
-
-static int raana_r3_seg(struct raana_ctx *ctx, unsigned long start,
-			unsigned long end, int *stop)
+static int raana_r3_scan(struct raana_ctx *ctx, unsigned long start,
+			 unsigned long end, int *stop, unsigned long confirm,
+			 int clen)
 {
 	struct raana_run r = {0};
 	unsigned long best_cand = 0;
@@ -470,15 +417,24 @@ static int raana_r3_seg(struct raana_ctx *ctx, unsigned long start,
 	unsigned long readable, scan_end, pos;
 	unsigned int m = 0;
 
-	start &= ~RAANA_PAGE_MASK;
-	end = (end + RAANA_PAGE_MASK) & ~RAANA_PAGE_MASK;
+	start &= ~KS_PAGE_MASK;
+	if (!confirm)
+		end = (end + KS_PAGE_MASK) & ~KS_PAGE_MASK;
 	readable = raana_probe(start, end + PAGE_SIZE);
+	if (kr_timeout_hit()) {
+		*stop = 1;
+		return 0;
+	}
 	scan_end = readable < end ? readable : end;
 	pos = start;
 
 	while (pos + 8 <= scan_end && !r.active) {
 		u64 w = *(const u64 *)pos;
 
+		if (((++m) & 0x3FF) == 0 && kr_timeout_hit()) {
+			*stop = 1;
+			return 0;
+		}
 		if (!(w & 0x8000000080000000ULL)) {
 			pos += 8;
 			continue;
@@ -498,10 +454,17 @@ static int raana_r3_seg(struct raana_ctx *ctx, unsigned long start,
 				int hl;
 
 				if (raana_r3_close(&r, &best_cand, &best_len,
-						   &hc, &hl) &&
-				    raana_hit_stop(ctx, hc, hl)) {
-					*stop = 1;
-					return 1;
+						   &hc, &hl)) {
+					if (confirm) {
+						if (hc == confirm &&
+						    hl - clen <= 1 &&
+						    clen - hl <= 1)
+							return 1;
+					} else if (raana_hit_stop(ctx, hc, hl,
+								  1)) {
+						*stop = 1;
+						return 1;
+					}
 				}
 				if ((int)v < 0) {
 					r.active = 1;
@@ -527,18 +490,22 @@ static int raana_r3_seg(struct raana_ctx *ctx, unsigned long start,
 		int hl;
 
 		if (raana_r3_close(&r, &best_cand, &best_len, &hc, &hl)) {
-			ctx->hit_cand = hc;
-			ctx->hit_len = hl;
-			if (ctx->first_hit || !ctx->range_active) {
-				ctx->hit_ok = 1;
-				*stop = 1;
-			} else if (raana_selfrel_recheck(hc, hl)) {
-				ctx->hit_ok = 1;
+			if (confirm) {
+				if (hc == confirm && hl - clen <= 1 &&
+				    clen - hl <= 1)
+					return 1;
+			} else if (raana_hit_stop(ctx, hc, hl, 1)) {
 				*stop = 1;
 			}
 		}
 	}
-	return ctx->hit_ok;
+	return confirm ? 0 : ctx->hit_ok;
+}
+
+static int raana_r3_seg(struct raana_ctx *ctx, unsigned long start,
+			unsigned long end, int *stop)
+{
+	return raana_r3_scan(ctx, start, end, stop, 0, 0);
 }
 
 typedef int (*raana_seg_fn)(struct raana_ctx *ctx, unsigned long start,
@@ -551,7 +518,7 @@ static void raana_segments(struct raana_ctx *ctx, unsigned long sw,
 		unsigned long pl = ctx->rlo > sw ? ctx->rlo : sw;
 		unsigned long ph = ctx->rhi < se ? ctx->rhi : se;
 
-		pl &= ~RAANA_PAGE_MASK;
+		pl &= ~KS_PAGE_MASK;
 		if (ph > pl) {
 			/* one boundary only the priority part runs to the
 			 * sweep end so runs starting inside it complete */
@@ -573,8 +540,8 @@ void raana_offsets_phase(struct raana_ctx *ctx, unsigned long ti,
 	int stop = 0;
 
 	sw = kltable > ctx->sback ?
-		(kltable - ctx->sback) & ~RAANA_PAGE_MASK : kernel_base;
-	se = (ti + ctx->sfwd + RAANA_PAGE_MASK) & ~RAANA_PAGE_MASK;
+		(kltable - ctx->sback) & ~KS_PAGE_MASK : kernel_base;
+	se = (ti + ctx->sfwd + KS_PAGE_MASK) & ~KS_PAGE_MASK;
 
 	raana_segments(ctx, sw, se, &stop, raana_r2_seg);
 	if (stop || ctx->hit_len)

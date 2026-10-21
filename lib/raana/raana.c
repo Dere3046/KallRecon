@@ -18,7 +18,7 @@ int kr_raana_discover(void)
 {
 	struct raana_ctx ctx;
 	const struct kallrecon_hint *h = kr_hint();
-	unsigned long ti = 0, kltable, ti255;
+	unsigned long ti = 0;
 	int i;
 
 #if defined(CONFIG_X86_64) && defined(CONFIG_KALLSYMS_ABSOLUTE_PERCPU)
@@ -29,12 +29,12 @@ int kr_raana_discover(void)
 
 	memset(&ctx, 0, sizeof(ctx));
 	spin_lock_init(&ctx.lock);
-	ctx.start = sprint_addr & ~RAANA_PAGE_MASK;
+	ctx.start = sprint_addr & ~KS_PAGE_MASK;
 	ctx.end = ctx.start + RAANA_TOKEN_RANGE;
 	ctx.nchunks = (int)((RAANA_TOKEN_RANGE + KS_WIN_SIZE - 1) /
 			    KS_WIN_SIZE);
-	ctx.sback = h->scan_back ? h->scan_back : RAANA_SCAN_BACK;
-	ctx.sfwd = h->scan_fwd ? h->scan_fwd : RAANA_SCAN_FWD;
+	ctx.sback = h->scan_back ? h->scan_back : KS_SCAN_BACK;
+	ctx.sfwd = h->scan_fwd ? h->scan_fwd : KS_SCAN_FWD;
 #ifdef KALLRECON_FIRST_HIT
 	ctx.first_hit = 1;
 #endif
@@ -78,12 +78,8 @@ int kr_raana_discover(void)
 	}
 	ks_dbg("[raana] ti=0x%lx\n", ti);
 
-	if (safe_read(&ti255, (void *)(ti + 255 * 2), 2))
+	if (!kr_setup_token_table(ti))
 		return 0;
-	kltable = kr_find_token_table(ti, ti255);
-	if (!kltable)
-		kltable = ti - RAANA_FALLBACK_OFF;
-	kltable_addr = kltable;
 
 	if (h->offsets) {
 		unsigned long best_cand = 0;
@@ -92,19 +88,12 @@ int kr_raana_discover(void)
 		if (!kr_hint_commit_offsets(h, &best_cand, &best_len))
 			return 0;
 	} else {
-		raana_offsets_phase(&ctx, ti, kltable);
+		raana_offsets_phase(&ctx, ti, kltable_addr);
 	}
 	if (!kloffs_addr)
 		return 0;
 
-	klindex_addr = ti;
-	is_v1_layout = kloffs_addr < ti ? 1 : 0;
-	if (kl_addr_mode == KS_MODE_SELFREL)
-		kl_layout = LAYOUT_V3;
-	else if (is_v1_layout)
-		kl_layout = LAYOUT_V1;
-	else
-		kl_layout = LAYOUT_V2;
+	kr_layout_from_offsets(ti);
 	ks_dbg("[raana] offsets=0x%lx len=%u\n", kloffs_addr, klnum_val);
 	return 1;
 }

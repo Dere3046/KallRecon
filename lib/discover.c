@@ -34,17 +34,11 @@ static inline u64 ks_zero_u32(u64 w)
 }
 #endif
 
-#define KS_RUN_MIN	5000		/* min offsets run length */
 #define KS_RUN_MAX	500000		/* run scan cap */
 #define KS_RB_SEARCH	4096		/* rb delta search range */
-#define KS_FALLBACK_OFF	0x1000		/* token_table fallback guess */
-#define KS_SCAN_BACK	0x400000	/* scan range below token_table */
-#define KS_SCAN_FWD	0x200000	/* scan range above token_index */
 #define KS_NUM_SEARCH	0x1000000	/* v3 num_syms search below names */
 #define KS_PCPU_EXT_MAX	100000		/* percpu extend entry cap */
 #define KS_PCPU_MAX	0x10000000	/* percpu absolute address cap */
-#define KS_2M_MASK	0x1FFFFFULL	/* kernel base alignment */
-#define KS_PAGE_MASK	0xFFFULL	/* page alignment */
 
 #ifdef KALLRECON_FIRST_HIT
 #define KS_FIRST_HIT(found)	do { if (found) return 1; } while (0)
@@ -686,36 +680,57 @@ static int hint_commit_offsets(const struct kallrecon_hint *h,
 	return 0;
 }
 
-#ifdef KS_LEGACY_SEARCH
-static int discover_kallsyms(unsigned long ti_addr)
+/* ti255 read plus token_table derivation shared by both engines */
+int kr_setup_token_table(unsigned long ti)
 {
 	const struct kallrecon_hint *h = kr_hint();
-	unsigned long best_cand = 0;
-	int best_len = 0;
 	unsigned short ti255;
-	unsigned long scan_start, scan_end;
-	unsigned long scan_back = h->scan_back ? h->scan_back : KS_SCAN_BACK;
-	unsigned long scan_fwd = h->scan_fwd ? h->scan_fwd : KS_SCAN_FWD;
 
-	if (safe_read(&ti255, (void *)(ti_addr + 255 * 2), 2))
+	if (safe_read(&ti255, (void *)(ti + 255 * 2), 2))
 		return 0;
-
 	if (h->token_table) {
 		unsigned short off0;
 		unsigned char c;
 
-		if (safe_read(&off0, (void *)(ti_addr + '0' * 2), 2) ||
+		if (safe_read(&off0, (void *)(ti + '0' * 2), 2) ||
 		    safe_read(&c, (void *)(h->token_table + off0), 1) ||
 		    c != '0') {
 			kr_fail_set(KALLRECON_HINT_INVALID);
 			return 0;
 		}
 		kltable_addr = h->token_table;
-	} else {
-		kltable_addr = find_token_table(ti_addr, ti255);
-		if (!kltable_addr)
-			kltable_addr = ti_addr - KS_FALLBACK_OFF;
+		return 1;
 	}
+	kltable_addr = find_token_table(ti, ti255);
+	if (!kltable_addr)
+		kltable_addr = ti - KS_FALLBACK_OFF;
+	return 1;
+}
+
+void kr_layout_from_offsets(unsigned long ti)
+{
+	klindex_addr = ti;
+	is_v1_layout = kloffs_addr < ti ? 1 : 0;
+	if (kl_addr_mode == KS_MODE_SELFREL)
+		kl_layout = LAYOUT_V3;
+	else if (is_v1_layout)
+		kl_layout = LAYOUT_V1;
+	else
+		kl_layout = LAYOUT_V2;
+}
+
+#ifdef KS_LEGACY_SEARCH
+static int discover_kallsyms(unsigned long ti_addr)
+{
+	const struct kallrecon_hint *h = kr_hint();
+	unsigned long best_cand = 0;
+	int best_len = 0;
+	unsigned long scan_start, scan_end;
+	unsigned long scan_back = h->scan_back ? h->scan_back : KS_SCAN_BACK;
+	unsigned long scan_fwd = h->scan_fwd ? h->scan_fwd : KS_SCAN_FWD;
+
+	if (!kr_setup_token_table(ti_addr))
+		return 0;
 
 	if (h->offsets) {
 		if (!hint_commit_offsets(h, &best_cand, &best_len))
@@ -743,14 +758,7 @@ static int discover_kallsyms(unsigned long ti_addr)
 	return 0;
 
 found:
-	klindex_addr = ti_addr;
-	is_v1_layout = (kloffs_addr < ti_addr) ? 1 : 0;
-	if (kl_addr_mode == KS_MODE_SELFREL)
-		kl_layout = LAYOUT_V3;
-	else if (is_v1_layout)
-		kl_layout = LAYOUT_V1;
-	else
-		kl_layout = LAYOUT_V2;
+	kr_layout_from_offsets(ti_addr);
 	ks_dbg("[kallrecon] discovered: sorted=%u v%d\n",
 		klnum_val, kl_layout);
 	return 1;
@@ -1386,11 +1394,6 @@ int kr_commit_offsets(unsigned long cand, int len,
 		      unsigned long *best_cand, int *best_len)
 {
 	return commit_offsets(cand, len, best_cand, best_len);
-}
-
-unsigned long kr_find_token_table(unsigned long ti_addr, unsigned short ti255)
-{
-	return find_token_table(ti_addr, ti255);
 }
 
 int kr_commit_selfrel(unsigned long cand, int len,
