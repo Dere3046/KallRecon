@@ -5,6 +5,7 @@
  * Copyright (C) 2026 dere3046
  */
 
+#include <linux/atomic.h>
 #include <linux/jiffies.h>
 #include <linux/string.h>
 #include <linux/errno.h>
@@ -13,7 +14,7 @@
 
 static struct kallrecon_hint kr_hint_state;
 static int kr_hint_on;
-static enum kallrecon_fail kr_fail = KALLRECON_OK;
+static atomic_t kr_fail = ATOMIC_INIT(KALLRECON_OK);
 static unsigned long kr_deadline;
 
 static int hint_any(const struct kallrecon_hint *h)
@@ -45,18 +46,17 @@ int kr_hint_active(void)
 
 void kr_fail_set(enum kallrecon_fail r)
 {
-	if (kr_fail == KALLRECON_OK)
-		kr_fail = r;
+	atomic_cmpxchg(&kr_fail, KALLRECON_OK, r);
 }
 
 void kr_fail_clear(void)
 {
-	kr_fail = KALLRECON_OK;
+	atomic_set(&kr_fail, KALLRECON_OK);
 }
 
 enum kallrecon_fail kallrecon_fail_reason(void)
 {
-	return kr_fail;
+	return atomic_read(&kr_fail);
 }
 
 void kr_timeout_arm(unsigned int ms)
