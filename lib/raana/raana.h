@@ -53,7 +53,7 @@ struct kallrecon_hint;
 
 /* verifiers owned by discover.c */
 int kr_check_ti_strong(unsigned short *ti);
-int kr_commit_offsets(unsigned long cand, int len,
+int kr_commit_offsets(unsigned long cand, int len, int tail,
 		      unsigned long *best_cand, int *best_len);
 int kr_commit_selfrel(unsigned long cand, int len,
 		      unsigned long *best_cand, int *best_len);

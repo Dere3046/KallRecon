@@ -282,6 +282,16 @@ static int commit_offsets(unsigned long cand, int len,
 	return 0;
 }
 
+/* a 2M aligned tail can be rb low or _end try trim first then raw len */
+static int commit_offsets_trim(unsigned long cand, int len, int tail,
+			       unsigned long *best_cand, int *best_len)
+{
+	if (tail != 0 && (tail & KS_2M_MASK) == 0 &&
+	    commit_offsets(cand, len - 1, best_cand, best_len))
+		return 1;
+	return commit_offsets(cand, len, best_cand, best_len);
+}
+
 #ifdef KS_LEGACY_SEARCH
 struct scan_run {
 	int active;
@@ -305,15 +315,11 @@ static void scan_run_close(struct scan_run *r, int selfrel,
 				*found = 1;
 			}
 		} else {
-			int len = r->len;
-
 			ks_dbg("[kallrecon] cand@0x%lx len=%d prev=0x%x\n",
-				r->cand, len, r->prev);
+				r->cand, r->len, r->prev);
 
-			if (r->prev != 0 && (r->prev & KS_2M_MASK) == 0)
-				len--;
-
-			if (commit_offsets(r->cand, len, best_cand, best_len))
+			if (commit_offsets_trim(r->cand, r->len, r->prev,
+						best_cand, best_len))
 				*found = 1;
 		}
 	}
@@ -447,10 +453,7 @@ static int rev_commit(unsigned long cand, int len, int head,
 		pc++;
 	}
 
-	if (head != 0 && (head & KS_2M_MASK) == 0)
-		len--;
-
-	return commit_offsets(full, len + pc, best_cand, best_len);
+	return commit_offsets_trim(full, len + pc, head, best_cand, best_len);
 }
 
 static int scan_zerou32_rev(unsigned long start, unsigned long end,
@@ -1390,10 +1393,10 @@ int kr_check_ti_strong(unsigned short *ti)
 	return check_ti_strong(ti);
 }
 
-int kr_commit_offsets(unsigned long cand, int len,
+int kr_commit_offsets(unsigned long cand, int len, int tail,
 		      unsigned long *best_cand, int *best_len)
 {
-	return commit_offsets(cand, len, best_cand, best_len);
+	return commit_offsets_trim(cand, len, tail, best_cand, best_len);
 }
 
 int kr_commit_selfrel(unsigned long cand, int len,

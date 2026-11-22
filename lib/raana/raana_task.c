@@ -239,16 +239,11 @@ static int raana_r2_close(struct raana_run *r, unsigned long *best_cand,
 	int len = r->len;
 	int ok = 0;
 
-	if (len >= KS_RUN_MIN && len > *best_len) {
-		int use = len;
-
-		if (r->prev != 0 && (r->prev & KS_2M_MASK) == 0)
-			use--;
-		if (kr_commit_offsets(r->cand, use, best_cand, best_len)) {
-			*hc = r->cand;
-			*hl = *best_len;
-			ok = 1;
-		}
+	if (len >= KS_RUN_MIN && len > *best_len &&
+	    kr_commit_offsets(r->cand, len, r->prev, best_cand, best_len)) {
+		*hc = r->cand;
+		*hl = *best_len;
+		ok = 1;
 	}
 	r->active = 0;
 	return ok;
